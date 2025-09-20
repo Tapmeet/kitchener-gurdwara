@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  SECRETARY
+  GRANTHI
+  LANGRI
+  VIEWER
+}
+
+enum LocationType {
+  HALL
+  HOME
+}
+
+enum ProgramCategory {
+  KIRTAN
+  PATH
+  OTHER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  phone     String?
+  role      UserRole @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings Booking[] @relation("BookedBy")
+}
+
+model Hall {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings Booking[]
+}
+
+model ProgramType {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  category        ProgramCategory
+  defaultMinutes  Int             @default(120)
+  requiresHall    Boolean         @default(true)
+  requiresRagi    Int             @default(0)
+  requiresGranthi Int             @default(0)
+  canBeAtHome     Boolean         @default(false)
+  isActive        Boolean         @default(true)
+
+  bookingItems BookingItem[]
+}
+
+model Booking {
+  id    String   @id @default(cuid())
+  title String
+  start DateTime
+  end   DateTime
+
+  locationType LocationType
+  hallId       String?
+  hall         Hall?        @relation(fields: [hallId], references: [id])
+
+  // Existing freeform address text (keep for full line)
+  address String?
+
+  // NEW structured fields (optional)
+  addressCity     String?
+  addressProvince String?
+  addressCountry  String?
+  addressPostal   String?
+  addressLat      Float?
+  addressLng      Float?
+
+  contactName  String
+  contactPhone String
+  notes        String?
+
+  createdById String?
+  createdBy   User?   @relation("BookedBy", fields: [createdById], references: [id])
+
+  items BookingItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([start, end])
+}
+
+model BookingItem {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  programTypeId String
+  programType   ProgramType @relation(fields: [programTypeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  notes String?
+
+  @@unique([bookingId, programTypeId])
+  @@index([programTypeId])
+}
