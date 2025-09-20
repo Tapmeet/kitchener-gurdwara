@@ -9,15 +9,6 @@ export const CreateBookingSchema = z.object({
   locationType: z.enum(['HALL', 'HOME']),
   hallId: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
-
-  // NEW: structured address fields (all optional)
-  address_city: z.string().optional().nullable(),
-  address_province: z.string().optional().nullable(),
-  address_country: z.string().optional().nullable(),
-  address_postal: z.string().optional().nullable(),
-  address_lat: z.string().optional().nullable(),
-  address_lng: z.string().optional().nullable(),
-
   contactName: z.string().min(2),
   contactPhone: z.string().min(7),
   notes: z.string().optional().nullable(),

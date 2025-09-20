@@ -72,16 +72,7 @@ model Booking {
   hallId       String?
   hall         Hall?        @relation(fields: [hallId], references: [id])
 
-  // Existing freeform address text (keep for full line)
   address String?
-
-  // NEW structured fields (optional)
-  addressCity     String?
-  addressProvince String?
-  addressCountry  String?
-  addressPostal   String?
-  addressLat      Float?
-  addressLng      Float?
 
   contactName  String
   contactPhone String
