@@ -1,17 +1,61 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
+import { allowedStartHoursFor } from '@/lib/businessHours';
 
-function toLocalInputMinutes(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const mm = pad(d.getMonth() + 1);
-  const dd = pad(d.getDate());
-  const hh = pad(d.getHours());
-  const mi = pad(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+/* ---------- helpers ---------- */
+
+function toLocalDateFromString(dateStr: string) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
 }
+
+function toLocalDateString(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function toISOFromLocalDateHour(dateStr: string, hour24: number) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const local = new Date(y, (m ?? 1) - 1, d ?? 1, hour24, 0, 0, 0);
+  return local.toISOString();
+}
+
+// 24h -> 12h + AM/PM
+function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
+  const ap: 'AM' | 'PM' = h24 < 12 ? 'AM' : 'PM';
+  const h = h24 % 12;
+  return { h12: h === 0 ? 12 : h, ap };
+}
+
+// 12h + AM/PM -> 24h
+function from12(h12: number, ap: 'AM' | 'PM'): number {
+  let h = h12 % 12; // 12 -> 0 baseline
+  if (ap === 'PM') h += 12;
+  return h;
+}
+
+// phone helpers
+function digitsOnly(s: string) {
+  return s.replace(/\D+/g, '');
+}
+function formatPhonePretty(digits: string) {
+  const d = digitsOnly(digits).slice(0, 10);
+  const a = d.slice(0, 3);
+  const b = d.slice(3, 6);
+  const c = d.slice(6, 10);
+  if (d.length <= 3) return a;
+  if (d.length <= 6) return `(${a}) ${b}`;
+  return `(${a}) ${b}-${c}`;
+}
+function toE164(digits: string) {
+  const d = digitsOnly(digits);
+  if (d.length === 10) return `+1${d}`;
+  return d ? `+1${d}` : '';
+}
+
+/* ---------- component ---------- */
 
 export default function BookingForm() {
   const [programTypes, setProgramTypes] = useState<any[]>([]);
@@ -19,14 +63,24 @@ export default function BookingForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [phone, setPhone] = useState<string>('');
 
-  // controlled time fields to avoid SSR mismatch
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [durationMin, setDurationMin] = useState(120);
-
-  // controlled location to toggle hall/address visibility
   const [locationType, setLocationType] = useState<'' | 'HALL' | 'HOME'>('');
+
+  // Date + 12h time
+  const now = useMemo(() => new Date(), []);
+  const [date, setDate] = useState(toLocalDateString(now));
+  const init12 = to12(now.getHours());
+  const [startHour12, setStartHour12] = useState<number>(init12.h12); // 1–12
+  const [startAmPm, setStartAmPm] = useState<'AM' | 'PM'>(init12.ap);
+  const [durationHours, setDurationHours] = useState<number>(2);
+
+  // Live end-time preview
+  const endPreview = useMemo(() => {
+    const start24 = from12(startHour12, startAmPm);
+    const end24 = (start24 + durationHours) % 24;
+    return to12(end24); // {h12, ap}
+  }, [startHour12, startAmPm, durationHours]);
 
   useEffect(() => {
     fetch('/api/program-types')
@@ -37,18 +91,7 @@ export default function BookingForm() {
       .then((r) => r.json())
       .then(setHalls)
       .catch(() => {});
-
-    const now = new Date();
-    setStart(toLocalInputMinutes(now));
-    setEnd(toLocalInputMinutes(new Date(now.getTime() + 120 * 60000)));
   }, []);
-
-  function onDurationChange(dur: number, s: string) {
-    setDurationMin(dur);
-    if (!s) return;
-    const dt = new Date(s);
-    setEnd(toLocalInputMinutes(new Date(dt.getTime() + dur * 60000)));
-  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -57,10 +100,10 @@ export default function BookingForm() {
     setSubmitting(true);
 
     const form = e.currentTarget;
-    const formData = new FormData(form);
+    const fd = new FormData(form);
 
     // exactly one program
-    const programId = String(formData.get('programType') || '');
+    const programId = String(fd.get('programType') || '');
     if (!programId) {
       setSubmitting(false);
       setError('Please select exactly one program.');
@@ -68,8 +111,8 @@ export default function BookingForm() {
     }
     const items = [{ programTypeId: programId }];
 
-    // location + dependent requirements
-    const loc = (locationType || String(formData.get('locationType') || '')) as
+    // location checks
+    const loc = (locationType || String(fd.get('locationType') || '')) as
       | 'HALL'
       | 'HOME'
       | '';
@@ -78,33 +121,48 @@ export default function BookingForm() {
       setError('Please select a Location (Hall or Home).');
       return;
     }
-    if (loc === 'HALL' && !String(formData.get('hallId') || '')) {
+    if (loc === 'HALL' && !String(fd.get('hallId') || '')) {
       setSubmitting(false);
       setError('Please select a hall.');
       return;
     }
-    if (loc === 'HOME' && !String(formData.get('address') || '').trim()) {
+    if (loc === 'HOME' && !String(fd.get('address') || '').trim()) {
       setSubmitting(false);
       setError('Please provide the home address.');
       return;
     }
 
-    // times
-    const startISO = new Date(
-      String(formData.get('start') || start)
+    // Validate slot against business hours again
+    const localDate = toLocalDateFromString(date);
+    const valid24 = allowedStartHoursFor(localDate, durationHours); // array of 0–23
+    const startHour24 = from12(startHour12, startAmPm);
+    if (!valid24.includes(startHour24)) {
+      setSubmitting(false);
+      setError(
+        'Selected start time is not available for the chosen day and duration.'
+      );
+      return;
+    }
+
+    // Build ISO times (hour-aligned)
+    const startISO = toISOFromLocalDateHour(date, startHour24);
+    const endISO = new Date(
+      new Date(startISO).getTime() + durationHours * 60 * 60 * 1000
     ).toISOString();
-    const endISO = new Date(String(formData.get('end') || end)).toISOString();
+
+    const phonePretty = phone || String(fd.get('contactPhone') || '');
+    const phoneE164 = toE164(phonePretty);
 
     const payload = {
-      title: String(formData.get('title') || ''),
+      title: String(fd.get('title') || ''),
       start: startISO,
       end: endISO,
       locationType: loc as 'HALL' | 'HOME',
-      hallId: String(formData.get('hallId') || '') || null,
-      address: String(formData.get('address') || '') || null,
-      contactName: String(formData.get('contactName') || ''),
-      contactPhone: String(formData.get('contactPhone') || ''),
-      notes: String(formData.get('notes') || '') || null,
+      hallId: String(fd.get('hallId') || '') || null,
+      address: String(fd.get('address') || '') || null,
+      contactName: String(fd.get('contactName') || ''),
+      contactPhone: phoneE164,
+      notes: String(fd.get('notes') || '') || null,
       items,
     };
 
@@ -129,12 +187,15 @@ export default function BookingForm() {
     } else {
       setSuccess('✅ Booking created!');
       form.reset();
-      // recompute end to reflect current duration
-      const s = start || toLocalInputMinutes(new Date());
-      const dt = new Date(s);
-      setEnd(toLocalInputMinutes(new Date(dt.getTime() + durationMin * 60000)));
-      // keep location state in sync with cleared form
       setLocationType('');
+      // Reset to now
+      const n = new Date();
+      setDate(toLocalDateString(n));
+      const t12 = to12(n.getHours());
+      setStartHour12(t12.h12);
+      setStartAmPm(t12.ap);
+      setDurationHours(2);
+      setPhone('');
     }
   }
 
@@ -167,8 +228,18 @@ export default function BookingForm() {
                 <input
                   className='input'
                   name='contactPhone'
+                  autoComplete='tel'
+                  inputMode='tel'
+                  placeholder='(519) 555-1234'
+                  value={phone}
+                  onChange={(e) => setPhone(formatPhonePretty(e.target.value))}
+                  onPaste={(e) => {
+                    const text = e.clipboardData.getData('text');
+                    setPhone(formatPhonePretty(text));
+                    e.preventDefault();
+                  }}
+                  maxLength={14} // "(XXX) XXX-XXXX"
                   required
-                  placeholder='555-555-5555'
                 />
               </div>
             </div>
@@ -191,47 +262,123 @@ export default function BookingForm() {
               </div>
 
               <div>
-                <label className='label'>Start</label>
+                <label className='label'>Date</label>
                 <input
                   className='input'
-                  type='datetime-local'
-                  name='start'
-                  value={start}
-                  onChange={(e) => {
-                    setStart(e.target.value);
-                    onDurationChange(durationMin, e.target.value);
-                  }}
+                  type='date'
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
                   required
                 />
               </div>
 
+              {/* 12-hour time: hour + AM/PM (period-aware) */}
+              <div className='grid grid-cols-2 gap-2'>
+                <div>
+                  <label className='label'>Start Hour</label>
+                  <select
+                    className='select'
+                    value={startHour12}
+                    onChange={(e) => setStartHour12(Number(e.target.value))}
+                  >
+                    {(() => {
+                      const localDate = toLocalDateFromString(date);
+                      const valid24 = allowedStartHoursFor(
+                        localDate,
+                        durationHours
+                      ); // 0–23
+                      const validForPeriod = valid24.filter(
+                        (h24) => (h24 < 12 ? 'AM' : 'PM') === startAmPm
+                      );
+
+                      // snap if current selection not valid in this period
+                      const currentValidH12s = validForPeriod.map((h24) => {
+                        const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+                        return h12;
+                      });
+                      if (
+                        !currentValidH12s.includes(startHour12) &&
+                        validForPeriod.length
+                      ) {
+                        const first = validForPeriod[0];
+                        const h12 = first % 12 === 0 ? 12 : first % 12;
+                        if (startHour12 !== h12) setStartHour12(h12);
+                      }
+
+                      return validForPeriod.map((h24) => {
+                        const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+                        return (
+                          <option key={h24} value={h12}>
+                            {h12}:00 {startAmPm}
+                          </option>
+                        );
+                      });
+                    })()}
+                  </select>
+                </div>
+                <div>
+                  <label className='label'>AM / PM</label>
+                  <select
+                    className='select'
+                    value={startAmPm}
+                    onChange={(e) => {
+                      const nextAp = e.target.value as 'AM' | 'PM';
+                      setStartAmPm(nextAp);
+
+                      // adjust hour if new period has no matching hour
+                      const localDate = toLocalDateFromString(date);
+                      const valid24 = allowedStartHoursFor(
+                        localDate,
+                        durationHours
+                      );
+                      const validForNew = valid24.filter(
+                        (h24) => (h24 < 12 ? 'AM' : 'PM') === nextAp
+                      );
+                      const current24 = from12(startHour12, nextAp);
+                      if (!valid24.includes(current24) && validForNew.length) {
+                        const first = validForNew[0];
+                        const h12 = first % 12 === 0 ? 12 : first % 12;
+                        setStartHour12(h12);
+                      }
+                    }}
+                  >
+                    <option value='AM'>AM</option>
+                    <option value='PM'>PM</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Single live end-time preview */}
+              <div className='md:col-span-2 -mt-2'>
+                <p className='text-xs text-gray-600'>
+                  Ends at{' '}
+                  <strong>
+                    {endPreview.h12}:00 {endPreview.ap}
+                  </strong>
+                </p>
+              </div>
+
+              {/* Single Duration selector */}
               <div>
                 <label className='label'>Duration</label>
                 <select
                   className='select'
-                  value={durationMin}
-                  onChange={(e) =>
-                    onDurationChange(Number(e.target.value), start)
-                  }
+                  value={durationHours}
+                  onChange={(e) => setDurationHours(Number(e.target.value))}
                 >
-                  <option value={120}>2 hours (default)</option>
-                  <option value={60}>1 hour</option>
-                  <option value={90}>1.5 hours</option>
-                  <option value={180}>3 hours</option>
-                  <option value={240}>4 hours</option>
+                  {([1, 2, 3, 4] as const).map((h) => {
+                    const localDate = toLocalDateFromString(date);
+                    const valid = allowedStartHoursFor(localDate, h);
+                    const disabled = valid.length === 0; // no start time can fit this duration on selected day
+                    return (
+                      <option key={h} value={h} disabled={disabled}>
+                        {h} {h === 1 ? 'hour' : 'hours'}
+                        {h === 2 ? ' (default)' : ''}
+                        {disabled ? ' — not available that day' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
-              </div>
-
-              <div>
-                <label className='label'>End</label>
-                <input
-                  className='input'
-                  type='datetime-local'
-                  name='end'
-                  value={end}
-                  onChange={(e) => setEnd(e.target.value)}
-                  required
-                />
               </div>
 
               <div>
@@ -251,23 +398,6 @@ export default function BookingForm() {
                     );
                     if (val === 'HALL' && addrInp) addrInp.value = '';
                     if (val === 'HOME' && hallSel) hallSel.value = '';
-
-                    // NEW: bring address into view
-                    if (val === 'HOME') {
-                      setTimeout(() => {
-                        document
-                          .querySelector('input[name="address"]')
-                          ?.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'center',
-                          });
-                        (
-                          document.querySelector(
-                            'input[name="address"]'
-                          ) as HTMLInputElement | null
-                        )?.focus();
-                      }, 0);
-                    }
                   }}
                   required
                 >
@@ -279,7 +409,6 @@ export default function BookingForm() {
                 </select>
               </div>
 
-              {/* Hall only when HALL */}
               {locationType === 'HALL' && (
                 <div>
                   <label className='label'>Hall</label>
@@ -290,7 +419,7 @@ export default function BookingForm() {
                     required
                   >
                     <option value=''>-- Select Hall --</option>
-                    {halls.map((h) => (
+                    {halls.map((h: any) => (
                       <option key={h.id} value={h.id}>
                         {h.name}
                       </option>
@@ -299,7 +428,6 @@ export default function BookingForm() {
                 </div>
               )}
 
-              {/* Address only when HOME */}
               {locationType === 'HOME' && (
                 <div className='md:col-span-2'>
                   <label className='label'>Address (Home)</label>

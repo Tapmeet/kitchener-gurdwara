@@ -6,16 +6,20 @@ async function upsertProgram(
   category: ProgramCategory,
   requiresRagi: number,
   requiresGranthi: number,
-  canBeAtHome: boolean,
   defaultMinutes = 120
 ) {
+  // All can be at home; none require a hall.
+  const canBeAtHome = true;
+  const requiresHall = false;
+
   await prisma.programType.upsert({
     where: { name },
     update: {
-      category: { set: category },
+      category,
       requiresRagi,
       requiresGranthi,
       canBeAtHome,
+      requiresHall,
       defaultMinutes,
       isActive: true,
     },
@@ -25,6 +29,7 @@ async function upsertProgram(
       requiresRagi,
       requiresGranthi,
       canBeAtHome,
+      requiresHall,
       defaultMinutes,
     },
   });
@@ -36,10 +41,10 @@ async function main() {
     skipDuplicates: true,
   });
 
-  await upsertProgram('Kirtan', ProgramCategory.KIRTAN, 1, 0, true, 120);
-  await upsertProgram('Path', ProgramCategory.PATH, 0, 1, true, 120);
-  await upsertProgram('Sukhmani Sahib', ProgramCategory.PATH, 0, 1, true, 180);
-  await upsertProgram('Akhand Path', ProgramCategory.PATH, 0, 1, true, 4320);
+  await upsertProgram('Kirtan', ProgramCategory.KIRTAN, 1, 0, 120);
+  await upsertProgram('Path', ProgramCategory.PATH, 0, 1, 120);
+  await upsertProgram('Sukhmani Sahib', ProgramCategory.PATH, 0, 1, 180);
+  await upsertProgram('Akhand Path', ProgramCategory.PATH, 0, 1, 4320);
 }
 
 main().finally(() => prisma.$disconnect());

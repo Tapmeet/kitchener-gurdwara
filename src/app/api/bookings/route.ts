@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { CreateBookingSchema } from '@/lib/validation';
 import { checkCaps } from '@/lib/conflicts';
+// ⬇️ NEW
+import { isWithinBusinessHours } from '@/lib/businessHours';
 
 export async function POST(req: Request) {
   try {
@@ -15,14 +17,12 @@ export async function POST(req: Request) {
     }
     const input = parsed.data;
 
-    // single program enforcement if you want that invariant:
     if (input.items.length !== 1) {
       return NextResponse.json(
         { error: 'Exactly one program must be selected.' },
         { status: 400 }
       );
     }
-
     if (input.locationType === 'HALL' && !input.hallId) {
       return NextResponse.json(
         { error: 'Hall is required for hall bookings' },
@@ -36,16 +36,22 @@ export async function POST(req: Request) {
       );
     }
 
+    // ⬇️ NEW: business hours validation (assumes start/end same local day)
+    const start = new Date(input.start);
+    const end = new Date(input.end);
+    const bh = isWithinBusinessHours(start, end);
+    if (!bh.ok) {
+      return NextResponse.json({ error: bh.error }, { status: 400 });
+    }
+
+    // ... existing overlap / cap logic ...
     const ptIds = input.items.map((i) => i.programTypeId);
     const pts = await prisma.programType.findMany({
       where: { id: { in: ptIds } },
     });
 
     const overlapping = await prisma.booking.findMany({
-      where: {
-        start: { lt: new Date(input.end) },
-        end: { gt: new Date(input.start) },
-      },
+      where: { start: { lt: end }, end: { gt: start } },
       include: { items: { include: { programType: true } } },
     });
 
@@ -56,11 +62,7 @@ export async function POST(req: Request) {
     if (input.locationType === 'HALL') {
       const HALL_CAP = 2;
       const concurrentHalls = await prisma.booking.count({
-        where: {
-          locationType: 'HALL',
-          start: { lt: new Date(input.end) },
-          end: { gt: new Date(input.start) },
-        },
+        where: { locationType: 'HALL', start: { lt: end }, end: { gt: start } },
       });
       if (concurrentHalls >= HALL_CAP) {
         return NextResponse.json(
@@ -73,11 +75,11 @@ export async function POST(req: Request) {
     const booking = await prisma.booking.create({
       data: {
         title: input.title,
-        start: new Date(input.start),
-        end: new Date(input.end),
+        start,
+        end,
         locationType: input.locationType as any,
         hallId: input.hallId ?? null,
-        address: input.address ?? null, // <- only this now
+        address: input.address ?? null,
         contactName: input.contactName,
         contactPhone: input.contactPhone,
         notes: input.notes ?? null,
