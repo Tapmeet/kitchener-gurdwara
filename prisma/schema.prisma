@@ -26,6 +26,11 @@ enum ProgramCategory {
   OTHER
 }
 
+enum StaffSkill {
+  PATH
+  KIRTAN
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -49,15 +54,21 @@ model Hall {
 }
 
 model ProgramType {
-  id              String          @id @default(cuid())
-  name            String          @unique
-  category        ProgramCategory
-  defaultMinutes  Int             @default(120)
-  requiresHall    Boolean         @default(true)
-  requiresRagi    Int             @default(0)
-  requiresGranthi Int             @default(0)
-  canBeOutsideGurdwara     Boolean         @default(false)
-  isActive        Boolean         @default(true)
+  id                   String          @id @default(cuid())
+  name                 String          @unique
+  category             ProgramCategory
+  defaultMinutes       Int             @default(120)
+  requiresHall         Boolean         @default(true)
+  requiresRagi         Int             @default(0)
+  requiresGranthi      Int             @default(0)
+  canBeOutsideGurdwara Boolean         @default(false)
+  isActive             Boolean         @default(true)
+
+  // Staffing & duration rules
+  durationMinutes Int @default(120)
+  minPathers      Int @default(0)
+  minKirtanis     Int @default(0)
+  peopleRequired  Int @default(1)
 
   bookingItems BookingItem[]
 }
@@ -72,6 +83,8 @@ model Booking {
   hallId       String?
   hall         Hall?        @relation(fields: [hallId], references: [id])
 
+  attendees Int @default(1)
+
   address String?
 
   contactName  String
@@ -81,7 +94,8 @@ model Booking {
   createdById String?
   createdBy   User?   @relation("BookedBy", fields: [createdById], references: [id])
 
-  items BookingItem[]
+  items       BookingItem[]
+  assignments BookingAssignment[] @relation("BookingAssignments") // ✅ single back-relation only
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -99,6 +113,36 @@ model BookingItem {
 
   notes String?
 
+  assignments BookingAssignment[] @relation("ItemAssignments") // ✅ single back-relation only
+
   @@unique([bookingId, programTypeId])
   @@index([programTypeId])
+}
+
+model Staff {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  skills    StaffSkill[]
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  assignments BookingAssignment[] @relation("StaffAssignments")
+}
+
+model BookingAssignment {
+  id            String @id @default(cuid())
+  bookingId     String
+  bookingItemId String
+  staffId       String
+
+  booking     Booking     @relation("BookingAssignments", fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingItem BookingItem @relation("ItemAssignments", fields: [bookingItemId], references: [id], onDelete: Cascade)
+  staff       Staff       @relation("StaffAssignments", fields: [staffId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([bookingItemId, staffId])
+  @@index([bookingId])
+  @@index([staffId])
 }

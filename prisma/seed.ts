@@ -1,50 +1,126 @@
-import { PrismaClient, ProgramCategory } from '@prisma/client';
+import { PrismaClient, ProgramCategory, StaffSkill } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function upsertProgram(
   name: string,
   category: ProgramCategory,
-  requiresRagi: number,
-  requiresGranthi: number,
-  defaultMinutes = 120
+  opts: {
+    durationMinutes: number;
+    peopleRequired: number;
+    minPathers: number;
+    minKirtanis: number;
+    requiresHall?: boolean;
+    canBeOutsideGurdwara?: boolean;
+  }
 ) {
-  // All can be at home; none require a hall.
-  const canBeOutsideGurdwara = true;
-  const requiresHall = false;
+  const {
+    durationMinutes,
+    peopleRequired,
+    minPathers,
+    minKirtanis,
+    requiresHall = false,
+    canBeOutsideGurdwara = true,
+  } = opts;
 
   await prisma.programType.upsert({
     where: { name },
     update: {
       category,
-      requiresRagi,
-      requiresGranthi,
-      canBeOutsideGurdwara,
+      durationMinutes,
+      peopleRequired,
+      minPathers,
+      minKirtanis,
       requiresHall,
-      defaultMinutes,
+      canBeOutsideGurdwara,
       isActive: true,
+      defaultMinutes: durationMinutes,
     },
     create: {
       name,
       category,
-      requiresRagi,
-      requiresGranthi,
-      canBeOutsideGurdwara,
+      durationMinutes,
+      peopleRequired,
+      minPathers,
+      minKirtanis,
       requiresHall,
-      defaultMinutes,
+      canBeOutsideGurdwara,
+      isActive: true,
+      defaultMinutes: durationMinutes,
     },
   });
 }
 
 async function main() {
   await prisma.hall.createMany({
-    data: [{ name: 'Main Hall' }, { name: 'Hall 2' }],
+    data: [{ name: 'Main Hall' }, { name: 'Small Hall' }],
     skipDuplicates: true,
   });
 
-  await upsertProgram('Kirtan', ProgramCategory.KIRTAN, 1, 0, 120);
-  await upsertProgram('Path', ProgramCategory.PATH, 0, 1, 120);
-  await upsertProgram('Sukhmani Sahib', ProgramCategory.PATH, 0, 1, 180);
-  await upsertProgram('Akhand Path', ProgramCategory.PATH, 0, 1, 4320);
+  const staffData = [
+    { name: 'Sevadar 1', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Sevadar 2', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Sevadar 3', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Sevadar 4', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Sevadar 5', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Sevadar 6', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
+    { name: 'Path-only Sevadar', skills: [StaffSkill.PATH] },
+  ];
+  for (const s of staffData) {
+    await prisma.staff.upsert({
+      where: { name: s.name },
+      update: { skills: s.skills, isActive: true },
+      create: { name: s.name, skills: s.skills, isActive: true },
+    });
+  }
+
+  await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
+    durationMinutes: 90,
+    peopleRequired: 1,
+    minPathers: 1,
+    minKirtanis: 0,
+  });
+
+  await upsertProgram('Sukhmani Sahib Path With Kirtan', ProgramCategory.PATH, {
+    durationMinutes: 120,
+    peopleRequired: 3,
+    minPathers: 1,
+    minKirtanis: 1,
+  });
+
+  await upsertProgram('Akhand Path', ProgramCategory.PATH, {
+    durationMinutes: 48 * 60,
+    peopleRequired: 4,
+    minPathers: 4,
+    minKirtanis: 0,
+  });
+
+  await upsertProgram('Akhand Path with Kirtan', ProgramCategory.PATH, {
+    durationMinutes: 49 * 60,
+    peopleRequired: 4,
+    minPathers: 4,
+    minKirtanis: 1,
+  });
+
+  await upsertProgram('Assa Di War', ProgramCategory.KIRTAN, {
+    durationMinutes: 180,
+    peopleRequired: 4,
+    minPathers: 0,
+    minKirtanis: 3,
+  });
+
+  await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
+    durationMinutes: 180,
+    peopleRequired: 4,
+    minPathers: 1,
+    minKirtanis: 1,
+  });
+
+  await upsertProgram('Kirtan', ProgramCategory.KIRTAN, {
+    durationMinutes: 60,
+    peopleRequired: 3,
+    minPathers: 0,
+    minKirtanis: 3,
+  });
 }
 
 main().finally(() => prisma.$disconnect());

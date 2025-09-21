@@ -2,40 +2,46 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
-import { allowedStartHoursFor } from '@/lib/businessHours';
 
-/* ---------- helpers ---------- */
+/* ---------- types ---------- */
+type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
+type ProgramCategory = 'KIRTAN' | 'PATH' | 'OTHER';
 
-function toLocalDateFromString(dateStr: string) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+interface ProgramType {
+  id: string;
+  name: string;
+  category: ProgramCategory;
+  durationMinutes: number; // used to compute end time
 }
 
+interface Hall {
+  id: string;
+  name: string;
+  capacity?: number | null; // optional; we also match by name
+}
+
+/* ---------- helpers ---------- */
 function toLocalDateString(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
 function toISOFromLocalDateHour(dateStr: string, hour24: number) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const local = new Date(y, (m ?? 1) - 1, d ?? 1, hour24, 0, 0, 0);
   return local.toISOString();
 }
-
 // 24h -> 12h + AM/PM
 function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
   const ap: 'AM' | 'PM' = h24 < 12 ? 'AM' : 'PM';
   const h = h24 % 12;
   return { h12: h === 0 ? 12 : h, ap };
 }
-
 // 12h + AM/PM -> 24h
 function from12(h12: number, ap: 'AM' | 'PM'): number {
-  let h = h12 % 12; // 12 -> 0 baseline
+  let h = h12 % 12;
   if (ap === 'PM') h += 12;
   return h;
 }
-
 // phone helpers
 function digitsOnly(s: string) {
   return s.replace(/\D+/g, '');
@@ -58,29 +64,62 @@ function toE164(digits: string) {
 /* ---------- component ---------- */
 
 export default function BookingForm() {
-  const [programTypes, setProgramTypes] = useState<any[]>([]);
-  const [halls, setHalls] = useState<any[]>([]);
+  const [programTypes, setProgramTypes] = useState<ProgramType[]>([]);
+  const [halls, setHalls] = useState<Hall[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [phone, setPhone] = useState<string>('');
+  const [locationType, setLocationType] = useState<LocationType>('');
 
-  const [locationType, setLocationType] = useState<'' | 'GURDWARA' | 'OUTSIDE_GURDWARA'>('');
-
-  // Date + 12h time
+  // Date + time
   const now = useMemo(() => new Date(), []);
   const [date, setDate] = useState(toLocalDateString(now));
   const init12 = to12(now.getHours());
   const [startHour12, setStartHour12] = useState<number>(init12.h12); // 1–12
   const [startAmPm, setStartAmPm] = useState<'AM' | 'PM'>(init12.ap);
-  const [durationHours, setDurationHours] = useState<number>(2);
 
-  // Live end-time preview
+  // Program-driven duration
+  const [selectedProgramId, setSelectedProgramId] = useState<string>('');
+  const selectedProgram = useMemo(
+    () => programTypes.find((p) => p.id === selectedProgramId),
+    [programTypes, selectedProgramId]
+  );
+  const durationMinutes = selectedProgram?.durationMinutes ?? 0;
+
+  // Attendees (for auto hall + availability)
+  const [attendees, setAttendees] = useState<number>(1);
+
+  // Available start hours (0–23) from /api/availability
+  const [availableHours, setAvailableHours] = useState<number[]>([]);
+
+  // Auto-assign hall (no user change)
+  const autoHall: Hall | undefined = useMemo(() => {
+    if (locationType !== 'GURDWARA') return undefined;
+    if (!halls.length) return undefined;
+
+    const small = halls.find(
+      (h) =>
+        (typeof h.capacity === 'number' && h.capacity <= 125) ||
+        /small/i.test(h.name)
+    );
+    const main = halls.find(
+      (h) =>
+        (typeof h.capacity === 'number' && h.capacity > 125) ||
+        /main/i.test(h.name)
+    );
+
+    // <125 => Small, otherwise Main (fallback if one not found)
+    return (attendees || 0) < 125 ? small ?? main : main ?? small;
+  }, [halls, locationType, attendees]);
+
+  // Live end-time preview (from program duration)
   const endPreview = useMemo(() => {
     const start24 = from12(startHour12, startAmPm);
-    const end24 = (start24 + durationHours) % 24;
-    return to12(end24); // {h12, ap}
-  }, [startHour12, startAmPm, durationHours]);
+    const addHrs = Math.ceil((durationMinutes || 0) / 60);
+    const end24 = (start24 + addHrs) % 24;
+    return to12(end24);
+  }, [startHour12, startAmPm, durationMinutes]);
 
   useEffect(() => {
     fetch('/api/program-types')
@@ -93,6 +132,36 @@ export default function BookingForm() {
       .catch(() => {});
   }, []);
 
+  // fetch availability (uses autoHall if Gurdwara)
+  useEffect(() => {
+    if (!selectedProgramId || !locationType) {
+      setAvailableHours([]);
+      return;
+    }
+    const params = new URLSearchParams({
+      date,
+      programTypeId: selectedProgramId,
+      locationType,
+      attendees: String(attendees || 1),
+    });
+    if (locationType === 'GURDWARA' && autoHall?.id) {
+      params.set('hallId', autoHall.id);
+    }
+
+    const url = `/api/availability?${params.toString()}`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((j) => setAvailableHours(Array.isArray(j.hours) ? j.hours : []))
+      .catch(() => setAvailableHours([]));
+  }, [
+    date,
+    selectedProgramId,
+    locationType,
+    attendees,
+    startAmPm,
+    autoHall?.id,
+  ]);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -102,8 +171,7 @@ export default function BookingForm() {
     const form = e.currentTarget;
     const fd = new FormData(form);
 
-    // exactly one program
-    const programId = String(fd.get('programType') || '');
+    const programId = selectedProgramId || String(fd.get('programType') || '');
     if (!programId) {
       setSubmitting(false);
       setError('Please select exactly one program.');
@@ -111,7 +179,6 @@ export default function BookingForm() {
     }
     const items = [{ programTypeId: programId }];
 
-    // location checks
     const loc = (locationType || String(fd.get('locationType') || '')) as
       | 'GURDWARA'
       | 'OUTSIDE_GURDWARA'
@@ -121,55 +188,58 @@ export default function BookingForm() {
       setError('Please select a Location (Gurdwara or Outside Gurdwara).');
       return;
     }
-    if (loc === 'GURDWARA' && !String(fd.get('hallId') || '')) {
-      setSubmitting(false);
-      setError('Please select a hall.');
-      return;
+    if (loc === 'GURDWARA') {
+      if (!autoHall?.id) {
+        setSubmitting(false);
+        setError('No suitable hall is available for the attendee count.');
+        return;
+      }
     }
     if (loc === 'OUTSIDE_GURDWARA' && !String(fd.get('address') || '').trim()) {
       setSubmitting(false);
-      setError('Please provide the home address.');
+      setError('Please provide the address.');
       return;
     }
 
-    // Validate slot against business hours again
-    const localDate = toLocalDateFromString(date);
-    const valid24 = allowedStartHoursFor(localDate, durationHours); // array of 0–23
-    const startHour24 = from12(startHour12, startAmPm);
-    if (!valid24.includes(startHour24)) {
+    // Ensure chosen start time is still valid
+    const start24 = from12(startHour12, startAmPm);
+    if (!availableHours.includes(start24)) {
       setSubmitting(false);
       setError(
-        'Selected start time is not available for the chosen day and duration.'
+        'Selected start time is no longer available. Please pick another.'
       );
       return;
     }
 
-    // Build ISO times (hour-aligned)
-    const startISO = toISOFromLocalDateHour(date, startHour24);
+    const startISO = toISOFromLocalDateHour(date, start24);
     const endISO = new Date(
-      new Date(startISO).getTime() + durationHours * 60 * 60 * 1000
+      new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
     ).toISOString();
 
     const phonePretty = phone || String(fd.get('contactPhone') || '');
     const phoneE164 = toE164(phonePretty);
 
     const payload = {
-      title: String(fd.get('title') || ''),
+      title: String(fd.get('title') || '').trim(),
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      hallId: String(fd.get('hallId') || '') || null,
-      address: String(fd.get('address') || '') || null,
-      contactName: String(fd.get('contactName') || ''),
+      hallId: loc === 'GURDWARA' ? autoHall?.id ?? null : null,
+      address:
+        loc === 'OUTSIDE_GURDWARA'
+          ? String(fd.get('address') || '').trim() || null
+          : null,
+      contactName: String(fd.get('contactName') || '').trim(),
       contactPhone: phoneE164,
-      notes: String(fd.get('notes') || '') || null,
+      notes: (fd.get('notes') as string | null) || null,
       items,
-    };
+      attendees,
+    } as const;
 
     const parsed = CreateBookingSchema.safeParse(payload);
     if (!parsed.success) {
       setSubmitting(false);
-      setError(parsed.error.errors.map((e) => e.message).join('; '));
+      setError(parsed.error.issues.map((i) => i.message).join('; '));
       return;
     }
 
@@ -180,7 +250,6 @@ export default function BookingForm() {
     });
 
     setSubmitting(false);
-
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       setError(j.error || 'Failed to create booking');
@@ -188,14 +257,15 @@ export default function BookingForm() {
       setSuccess('✅ Booking created!');
       form.reset();
       setLocationType('');
-      // Reset to now
       const n = new Date();
       setDate(toLocalDateString(n));
       const t12 = to12(n.getHours());
       setStartHour12(t12.h12);
       setStartAmPm(t12.ap);
-      setDurationHours(2);
       setPhone('');
+      setSelectedProgramId('');
+      setAvailableHours([]);
+      setAttendees(1);
     }
   }
 
@@ -238,14 +308,14 @@ export default function BookingForm() {
                     setPhone(formatPhonePretty(text));
                     e.preventDefault();
                   }}
-                  maxLength={14} // "(XXX) XXX-XXXX"
+                  maxLength={14}
                   required
                 />
               </div>
             </div>
           </div>
 
-          {/* Details */}
+          {/* Details (title, attendees, location, address / auto hall preview) */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Details
@@ -262,123 +332,14 @@ export default function BookingForm() {
               </div>
 
               <div>
-                <label className='label'>Date</label>
+                <label className='label'>Attendees</label>
                 <input
                   className='input'
-                  type='date'
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  required
+                  type='number'
+                  min={1}
+                  value={attendees}
+                  onChange={(e) => setAttendees(Number(e.target.value) || 1)}
                 />
-              </div>
-
-              {/* 12-hour time: hour + AM/PM (period-aware) */}
-              <div className='grid grid-cols-2 gap-2'>
-                <div>
-                  <label className='label'>Start Hour</label>
-                  <select
-                    className='select'
-                    value={startHour12}
-                    onChange={(e) => setStartHour12(Number(e.target.value))}
-                  >
-                    {(() => {
-                      const localDate = toLocalDateFromString(date);
-                      const valid24 = allowedStartHoursFor(
-                        localDate,
-                        durationHours
-                      ); // 0–23
-                      const validForPeriod = valid24.filter(
-                        (h24) => (h24 < 12 ? 'AM' : 'PM') === startAmPm
-                      );
-
-                      // snap if current selection not valid in this period
-                      const currentValidH12s = validForPeriod.map((h24) => {
-                        const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-                        return h12;
-                      });
-                      if (
-                        !currentValidH12s.includes(startHour12) &&
-                        validForPeriod.length
-                      ) {
-                        const first = validForPeriod[0];
-                        const h12 = first % 12 === 0 ? 12 : first % 12;
-                        if (startHour12 !== h12) setStartHour12(h12);
-                      }
-
-                      return validForPeriod.map((h24) => {
-                        const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-                        return (
-                          <option key={h24} value={h12}>
-                            {h12}:00 {startAmPm}
-                          </option>
-                        );
-                      });
-                    })()}
-                  </select>
-                </div>
-                <div>
-                  <label className='label'>AM / PM</label>
-                  <select
-                    className='select'
-                    value={startAmPm}
-                    onChange={(e) => {
-                      const nextAp = e.target.value as 'AM' | 'PM';
-                      setStartAmPm(nextAp);
-
-                      // adjust hour if new period has no matching hour
-                      const localDate = toLocalDateFromString(date);
-                      const valid24 = allowedStartHoursFor(
-                        localDate,
-                        durationHours
-                      );
-                      const validForNew = valid24.filter(
-                        (h24) => (h24 < 12 ? 'AM' : 'PM') === nextAp
-                      );
-                      const current24 = from12(startHour12, nextAp);
-                      if (!valid24.includes(current24) && validForNew.length) {
-                        const first = validForNew[0];
-                        const h12 = first % 12 === 0 ? 12 : first % 12;
-                        setStartHour12(h12);
-                      }
-                    }}
-                  >
-                    <option value='AM'>AM</option>
-                    <option value='PM'>PM</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Single live end-time preview */}
-              <div className='md:col-span-2 -mt-2'>
-                <p className='text-xs text-gray-600'>
-                  Ends at{' '}
-                  <strong>
-                    {endPreview.h12}:00 {endPreview.ap}
-                  </strong>
-                </p>
-              </div>
-
-              {/* Single Duration selector */}
-              <div>
-                <label className='label'>Duration</label>
-                <select
-                  className='select'
-                  value={durationHours}
-                  onChange={(e) => setDurationHours(Number(e.target.value))}
-                >
-                  {([1, 2, 3, 4] as const).map((h) => {
-                    const localDate = toLocalDateFromString(date);
-                    const valid = allowedStartHoursFor(localDate, h);
-                    const disabled = valid.length === 0; // no start time can fit this duration on selected day
-                    return (
-                      <option key={h} value={h} disabled={disabled}>
-                        {h} {h === 1 ? 'hour' : 'hours'}
-                        {h === 2 ? ' (default)' : ''}
-                        {disabled ? ' — not available that day' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
               </div>
 
               <div>
@@ -387,18 +348,9 @@ export default function BookingForm() {
                   className='select'
                   name='locationType'
                   value={locationType}
-                  onChange={(e) => {
-                    const val = e.target.value as '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
-                    setLocationType(val);
-                    const hallSel = document.querySelector<HTMLSelectElement>(
-                      'select[name="hallId"]'
-                    );
-                    const addrInp = document.querySelector<HTMLInputElement>(
-                      'input[name="address"]'
-                    );
-                    if (val === 'GURDWARA' && addrInp) addrInp.value = '';
-                    if (val === 'OUTSIDE_GURDWARA' && hallSel) hallSel.value = '';
-                  }}
+                  onChange={(e) =>
+                    setLocationType(e.target.value as LocationType)
+                  }
                   required
                 >
                   <option value='' disabled>
@@ -410,27 +362,23 @@ export default function BookingForm() {
               </div>
 
               {locationType === 'GURDWARA' && (
-                <div>
-                  <label className='label'>Hall</label>
-                  <select
-                    className='select'
-                    name='hallId'
-                    defaultValue=''
-                    required
-                  >
-                    <option value=''>-- Select Hall --</option>
-                    {halls.map((h: any) => (
-                      <option key={h.id} value={h.id}>
-                        {h.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className='md:col-span-2'>
+                  <label className='label'>Hall (auto-assigned)</label>
+                  <input
+                    className='input bg-gray-100'
+                    value={autoHall ? autoHall.name : 'Choosing…'}
+                    readOnly
+                  />
+                  <p className='text-xs text-gray-500 mt-1'>
+                    Based on attendees ({attendees}): &lt;125 → Small Hall, ≥125
+                    → Main Hall.
+                  </p>
                 </div>
               )}
 
               {locationType === 'OUTSIDE_GURDWARA' && (
                 <div className='md:col-span-2'>
-                  <label className='label'>Address (Home)</label>
+                  <label className='label'>Address</label>
                   <AddressAutocomplete required />
                 </div>
               )}
@@ -443,20 +391,150 @@ export default function BookingForm() {
               Programs
             </h3>
             <div className='grid md:grid-cols-3 gap-3'>
-              {programTypes.map((pt: any) => (
+              {programTypes.map((pt) => (
                 <label
                   key={pt.id}
                   className='flex items-center gap-2 rounded-xl border border-black/10 p-3 hover:bg-black/5'
                 >
-                  <input type='radio' name='programType' value={pt.id} />
+                  <input
+                    type='radio'
+                    name='programType'
+                    value={pt.id}
+                    checked={selectedProgramId === pt.id}
+                    onChange={() => setSelectedProgramId(pt.id)}
+                    required
+                  />
                   <span className='text-sm'>
                     {pt.name}{' '}
                     <span className='text-xs text-gray-500'>
-                      ({pt.category})
+                      ({pt.category} •{' '}
+                      {Math.ceil((pt.durationMinutes || 0) / 60)}h)
                     </span>
                   </span>
                 </label>
               ))}
+            </div>
+          </div>
+
+          {/* Schedule (Date & Time) */}
+          <div>
+            <h3 className='text-sm font-semibold text-gray-700 mb-2'>
+              Schedule
+            </h3>
+            <div className='grid md:grid-cols-2 gap-4'>
+              <div>
+                <label className='label'>Date</label>
+                <input
+                  className='input'
+                  type='date'
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required
+                />
+              </div>
+
+              {/* 12-hour time: hour + AM/PM */}
+              <div className='grid grid-cols-2 gap-2'>
+                <div>
+                  <label className='label'>Start Hour</label>
+                  <select
+                    className='select'
+                    value={startHour12}
+                    onChange={(e) => setStartHour12(Number(e.target.value))}
+                    disabled={!selectedProgramId || !locationType}
+                  >
+                    {(() => {
+                      const period = startAmPm;
+                      const apiHours = (availableHours || []).filter(
+                        (h24) => (h24 < 12 ? 'AM' : 'PM') === period
+                      );
+                      const fallback24 =
+                        period === 'AM'
+                          ? Array.from({ length: 12 }, (_, i) => i) // 0..11
+                          : Array.from({ length: 12 }, (_, i) => i + 12); // 12..23
+
+                      const hoursToShow =
+                        selectedProgramId && locationType
+                          ? apiHours.length
+                            ? apiHours
+                            : fallback24
+                          : [];
+                      const options = hoursToShow.map((h24) => ({
+                        h24,
+                        h12: h24 % 12 === 0 ? 12 : h24 % 12,
+                      }));
+                      const validH12 = options.map((o) => o.h12);
+                      if (options.length && !validH12.includes(startHour12)) {
+                        setStartHour12(options[0].h12);
+                      }
+
+                      return options.map(({ h24, h12 }) => (
+                        <option key={h24} value={h12}>
+                          {h12}:00 {period}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+
+                  {selectedProgramId &&
+                    locationType &&
+                    availableHours.length === 0 && (
+                      <p className='text-xs text-red-600 mt-1'>
+                        No reserved slots found from the server; showing all{' '}
+                        {startAmPm} hours as a fallback.
+                      </p>
+                    )}
+                </div>
+
+                <div>
+                  <label className='label'>AM / PM</label>
+                  <select
+                    className='select'
+                    value={startAmPm}
+                    onChange={(e) => {
+                      const nextAp = e.target.value as 'AM' | 'PM';
+                      setStartAmPm(nextAp);
+
+                      const apiHoursNext = (availableHours || []).filter(
+                        (h24) => (h24 < 12 ? 'AM' : 'PM') === nextAp
+                      );
+                      const fallbackNext =
+                        nextAp === 'AM'
+                          ? Array.from({ length: 12 }, (_, i) => i)
+                          : Array.from({ length: 12 }, (_, i) => i + 12);
+
+                      const list = apiHoursNext.length
+                        ? apiHoursNext
+                        : fallbackNext;
+                      const current24 = from12(startHour12, nextAp);
+                      if (!list.includes(current24) && list.length) {
+                        const first = list[0];
+                        const h12 = first % 12 === 0 ? 12 : first % 12;
+                        setStartHour12(h12);
+                      }
+                    }}
+                  >
+                    <option value='AM'>AM</option>
+                    <option value='PM'>PM</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* End-time preview */}
+              <div className='md:col-span-2 -mt-2'>
+                <p className='text-xs text-gray-600'>
+                  Ends at{' '}
+                  <strong>
+                    {endPreview.h12}:00 {endPreview.ap}
+                  </strong>
+                  {selectedProgram && (
+                    <span className='text-xs text-gray-500'>
+                      {' '}
+                      • {Math.ceil((durationMinutes || 0) / 60)}h
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
           </div>
 

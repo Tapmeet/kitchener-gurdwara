@@ -2,10 +2,13 @@
 CREATE TYPE "public"."UserRole" AS ENUM ('ADMIN', 'SECRETARY', 'GRANTHI', 'LANGRI', 'VIEWER');
 
 -- CreateEnum
-CREATE TYPE "public"."LocationType" AS ENUM ('HALL', 'HOME');
+CREATE TYPE "public"."LocationType" AS ENUM ('GURDWARA', 'OUTSIDE_GURDWARA');
 
 -- CreateEnum
 CREATE TYPE "public"."ProgramCategory" AS ENUM ('KIRTAN', 'PATH', 'OTHER');
+
+-- CreateEnum
+CREATE TYPE "public"."StaffSkill" AS ENUM ('PATH', 'KIRTAN');
 
 -- CreateTable
 CREATE TABLE "public"."User" (
@@ -42,6 +45,10 @@ CREATE TABLE "public"."ProgramType" (
     "requiresGranthi" INTEGER NOT NULL DEFAULT 0,
     "canBeOutsideGurdwara" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "durationMinutes" INTEGER NOT NULL DEFAULT 120,
+    "minPathers" INTEGER NOT NULL DEFAULT 0,
+    "minKirtanis" INTEGER NOT NULL DEFAULT 0,
+    "peopleRequired" INTEGER NOT NULL DEFAULT 1,
 
     CONSTRAINT "ProgramType_pkey" PRIMARY KEY ("id")
 );
@@ -54,6 +61,7 @@ CREATE TABLE "public"."Booking" (
     "end" TIMESTAMP(3) NOT NULL,
     "locationType" "public"."LocationType" NOT NULL,
     "hallId" TEXT,
+    "attendees" INTEGER NOT NULL DEFAULT 1,
     "address" TEXT,
     "contactName" TEXT NOT NULL,
     "contactPhone" TEXT NOT NULL,
@@ -75,6 +83,29 @@ CREATE TABLE "public"."BookingItem" (
     CONSTRAINT "BookingItem_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "public"."Staff" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "skills" "public"."StaffSkill"[],
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Staff_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."BookingAssignment" (
+    "id" TEXT NOT NULL,
+    "bookingId" TEXT NOT NULL,
+    "bookingItemId" TEXT NOT NULL,
+    "staffId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "BookingAssignment_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "public"."User"("email");
 
@@ -88,13 +119,22 @@ CREATE UNIQUE INDEX "ProgramType_name_key" ON "public"."ProgramType"("name");
 CREATE INDEX "Booking_start_end_idx" ON "public"."Booking"("start", "end");
 
 -- CreateIndex
-CREATE INDEX "Booking_hallId_idx" ON "public"."Booking"("hallId");
-
--- CreateIndex
 CREATE INDEX "BookingItem_programTypeId_idx" ON "public"."BookingItem"("programTypeId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "BookingItem_bookingId_programTypeId_key" ON "public"."BookingItem"("bookingId", "programTypeId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Staff_name_key" ON "public"."Staff"("name");
+
+-- CreateIndex
+CREATE INDEX "BookingAssignment_bookingId_idx" ON "public"."BookingAssignment"("bookingId");
+
+-- CreateIndex
+CREATE INDEX "BookingAssignment_staffId_idx" ON "public"."BookingAssignment"("staffId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "BookingAssignment_bookingItemId_staffId_key" ON "public"."BookingAssignment"("bookingItemId", "staffId");
 
 -- AddForeignKey
 ALTER TABLE "public"."Booking" ADD CONSTRAINT "Booking_hallId_fkey" FOREIGN KEY ("hallId") REFERENCES "public"."Hall"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -107,3 +147,12 @@ ALTER TABLE "public"."BookingItem" ADD CONSTRAINT "BookingItem_bookingId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "public"."BookingItem" ADD CONSTRAINT "BookingItem_programTypeId_fkey" FOREIGN KEY ("programTypeId") REFERENCES "public"."ProgramType"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."BookingAssignment" ADD CONSTRAINT "BookingAssignment_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "public"."Booking"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."BookingAssignment" ADD CONSTRAINT "BookingAssignment_bookingItemId_fkey" FOREIGN KEY ("bookingItemId") REFERENCES "public"."BookingItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."BookingAssignment" ADD CONSTRAINT "BookingAssignment_staffId_fkey" FOREIGN KEY ("staffId") REFERENCES "public"."Staff"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
