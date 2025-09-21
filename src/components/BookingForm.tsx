@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
+import { useRouter } from 'next/navigation';
 
 /* ---------- types ---------- */
 type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
@@ -92,6 +93,7 @@ function visibleStartHours(
 /* ---------- component ---------- */
 
 export default function BookingForm() {
+  const router = useRouter();
   const [programTypes, setProgramTypes] = useState<ProgramType[]>([]);
   const [halls, setHalls] = useState<Hall[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export default function BookingForm() {
   const now = useMemo(() => new Date(), []);
   const [date, setDate] = useState(toLocalDateString(now));
 
-  // NEW: single 24h start time within 7–19
+  // Single 24h start time within 7–19
   const initialStartHour24 = (() => {
     const h = now.getHours();
     if (h < 7 || h > 19) return 7;
@@ -112,13 +114,17 @@ export default function BookingForm() {
   })();
   const [startHour24, setStartHour24] = useState<number>(initialStartHour24);
 
-  // Program-driven duration
-  const [selectedProgramId, setSelectedProgramId] = useState<string>('');
-  const selectedProgram = useMemo(
-    () => programTypes.find((p) => p.id === selectedProgramId),
-    [programTypes, selectedProgramId]
+  // Programs: MULTI-SELECT
+  const [selectedProgramIds, setSelectedProgramIds] = useState<string[]>([]);
+  const selectedPrograms = useMemo(
+    () => programTypes.filter((p) => selectedProgramIds.includes(p.id)),
+    [programTypes, selectedProgramIds]
   );
-  const durationMinutes = selectedProgram?.durationMinutes ?? 0;
+  // Duration = max of selected programs (they run concurrently)
+  const durationMinutes =
+    selectedPrograms.length > 0
+      ? Math.max(...selectedPrograms.map((p) => p.durationMinutes || 0))
+      : 0;
 
   // Attendees (for auto hall + availability)
   const [attendees, setAttendees] = useState<number>(1);
@@ -145,7 +151,7 @@ export default function BookingForm() {
     return (attendees || 0) < 125 ? small ?? main : main ?? small;
   }, [halls, locationType, attendees]);
 
-  // Live end-time preview (from program duration)
+  // Live end-time preview
   const endPreview = useMemo(() => {
     const addHrs = Math.ceil((durationMinutes || 0) / 60);
     const end24 = (startHour24 + addHrs) % 24;
@@ -165,13 +171,13 @@ export default function BookingForm() {
 
   // fetch availability (uses autoHall if Gurdwara)
   useEffect(() => {
-    if (!selectedProgramId || !locationType) {
+    if (selectedProgramIds.length === 0 || !locationType) {
       setAvailableHours([]);
       return;
     }
     const params = new URLSearchParams({
       date,
-      programTypeId: selectedProgramId,
+      programTypeIds: selectedProgramIds.join(','), // NEW: multi programs
       locationType,
       attendees: String(attendees || 1),
     });
@@ -184,7 +190,19 @@ export default function BookingForm() {
       .then((r) => r.json())
       .then((j) => setAvailableHours(Array.isArray(j.hours) ? j.hours : []))
       .catch(() => setAvailableHours([]));
-  }, [date, selectedProgramId, locationType, attendees, autoHall?.id]);
+  }, [
+    date,
+    selectedProgramIds.join(','),
+    locationType,
+    attendees,
+    autoHall?.id,
+  ]);
+
+  function toggleProgram(id: string) {
+    setSelectedProgramIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -195,13 +213,12 @@ export default function BookingForm() {
     const form = e.currentTarget;
     const fd = new FormData(form);
 
-    const programId = selectedProgramId || String(fd.get('programType') || '');
-    if (!programId) {
+    if (selectedProgramIds.length === 0) {
       setSubmitting(false);
-      setError('Please select exactly one program.');
+      setError('Please select at least one program.');
       return;
     }
-    const items = [{ programTypeId: programId }];
+    const items = selectedProgramIds.map((id) => ({ programTypeId: id }));
 
     const loc = (locationType || String(fd.get('locationType') || '')) as
       | 'GURDWARA'
@@ -225,8 +242,7 @@ export default function BookingForm() {
       return;
     }
 
-    // Ensure chosen start time is still valid
-    // Only enforce if server actually sent availability; otherwise allow fallback business hours.
+    // Ensure chosen start time is still valid (if API provided hours)
     if (availableHours.length > 0 && !availableHours.includes(startHour24)) {
       setSubmitting(false);
       setError(
@@ -284,21 +300,30 @@ export default function BookingForm() {
     });
 
     setSubmitting(false);
+    const j = await res.json().catch(() => ({}));
+
     if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
       setError(j.error || 'Failed to create booking');
-    } else {
-      setSuccess('✅ Booking created!');
-      form.reset();
-      setLocationType('');
-      const n = new Date();
-      setDate(toLocalDateString(n));
-      setStartHour24(7); // reset to earliest business hour
-      setPhone('');
-      setSelectedProgramId('');
-      setAvailableHours([]);
-      setAttendees(1);
+      return;
     }
+
+    if (j?.id) {
+      // ⬇️ redirect to assignments page for this booking
+      router.push(`/bookings/${j.id}/assignments`);
+      return;
+    }
+
+    // fallback if no id returned
+    setSuccess('✅ Booking created!');
+    form.reset();
+    setLocationType('');
+    const n = new Date();
+    setDate(toLocalDateString(n));
+    setStartHour24(7);
+    setPhone('');
+    setSelectedProgramIds([]);
+    setAvailableHours([]);
+    setAttendees(1);
   }
 
   return (
@@ -417,35 +442,41 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Programs (single) */}
+          {/* Programs (MULTI) */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Programs
             </h3>
             <div className='grid md:grid-cols-3 gap-3'>
-              {programTypes.map((pt) => (
-                <label
-                  key={pt.id}
-                  className='flex items-center gap-2 rounded-xl border border-black/10 p-3 hover:bg-black/5'
-                >
-                  <input
-                    type='radio'
-                    name='programType'
-                    value={pt.id}
-                    checked={selectedProgramId === pt.id}
-                    onChange={() => setSelectedProgramId(pt.id)}
-                    required
-                  />
-                  <span className='text-sm'>
-                    {pt.name}{' '}
-                    <span className='text-xs text-gray-500'>
-                      ({pt.category} •{' '}
-                      {Math.ceil((pt.durationMinutes || 0) / 60)}h)
+              {programTypes.map((pt) => {
+                const checked = selectedProgramIds.includes(pt.id);
+                return (
+                  <label
+                    key={pt.id}
+                    className='flex items-center gap-2 rounded-xl border border-black/10 p-3 hover:bg-black/5'
+                  >
+                    <input
+                      type='checkbox'
+                      value={pt.id}
+                      checked={checked}
+                      onChange={() => toggleProgram(pt.id)}
+                    />
+                    <span className='text-sm'>
+                      {pt.name}{' '}
+                      <span className='text-xs text-gray-500'>
+                        ({pt.category} •{' '}
+                        {Math.ceil((pt.durationMinutes || 0) / 60)}h)
+                      </span>
                     </span>
-                  </span>
-                </label>
-              ))}
+                  </label>
+                );
+              })}
             </div>
+            {selectedProgramIds.length === 0 && (
+              <p className='text-xs text-red-600 mt-2'>
+                Select at least one program.
+              </p>
+            )}
           </div>
 
           {/* Schedule (Date & Time) */}
@@ -465,14 +496,14 @@ export default function BookingForm() {
                 />
               </div>
 
-              {/* NEW: single Start Time dropdown (7 AM – 7 PM) */}
+              {/* Single Start Time dropdown (7 AM – 7 PM) */}
               <div>
                 <label className='label'>Start Time</label>
                 <select
                   className='select'
                   value={startHour24}
                   onChange={(e) => setStartHour24(Number(e.target.value))}
-                  disabled={!selectedProgramId || !locationType}
+                  disabled={selectedProgramIds.length === 0 || !locationType}
                 >
                   {(() => {
                     // Intersect business hours with server-available hours
@@ -487,11 +518,10 @@ export default function BookingForm() {
                       setStartHour24(list[0]);
                     }
 
-                    // If the whole day is in the past (e.g., it's after 7pm), show nothing
                     if (list.length === 0) {
                       return (
                         <option value='' disabled>
-                          No times available today
+                          No times available for the selected date
                         </option>
                       );
                     }
@@ -506,21 +536,21 @@ export default function BookingForm() {
                     });
                   })()}
                 </select>
-                
+
                 {date === todayLocalDateString() && (
                   <p className='text-xs text-gray-500 mt-1'>
                     Past times today are hidden.
                   </p>
                 )}
 
-                {selectedProgramId &&
+                {selectedProgramIds.length > 0 &&
                   locationType &&
                   availableHours.length > 0 && (
                     <p className='text-xs text-gray-500 mt-1'>
                       Booked hours are hidden for {date}.
                     </p>
                   )}
-                {selectedProgramId &&
+                {selectedProgramIds.length > 0 &&
                   locationType &&
                   availableHours.length === 0 && (
                     <p className='text-xs text-gray-500 mt-1'>
@@ -536,7 +566,7 @@ export default function BookingForm() {
                   <strong>
                     {endPreview.h12}:00 {endPreview.ap}
                   </strong>
-                  {selectedProgram && (
+                  {selectedPrograms.length > 0 && (
                     <span className='text-xs text-gray-500'>
                       {' '}
                       • {Math.ceil((durationMinutes || 0) / 60)}h
