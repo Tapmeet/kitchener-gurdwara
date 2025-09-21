@@ -11,7 +11,7 @@ type CalendarEvent = {
   start: string;
   end: string;
   extendedProps?: {
-    locationType?: 'HALL' | 'HOME';
+    locationType?: 'GURDWARA' | 'OUTSIDE_GURDWARA';
     hallId?: string | null;
     programs?: string[]; // e.g. ["Kirtan"], ["Sukhmani Sahib"]
   };
@@ -25,7 +25,7 @@ export default function CalendarView() {
   const [q, setQ] = useState('');
   const [showKirtan, setShowKirtan] = useState(true);
   const [showPath, setShowPath] = useState(true);
-  const [locationType, setLocationType] = useState<'' | 'HALL' | 'HOME'>('');
+  const [locationType, setLocationType] = useState<'' | 'GURDWARA' | 'OUTSIDE_GURDWARA'>('');
   const [halls, setHalls] = useState<{ id: string; name: string }[]>([]);
   const [hallId, setHallId] = useState('');
 
@@ -73,7 +73,7 @@ export default function CalendarView() {
 
       const locOk = !locationType || xp.locationType === locationType;
       const hallOk =
-        !hallId || (xp.locationType === 'HALL' && xp.hallId === hallId);
+        !hallId || (xp.locationType === 'GURDWARA' && xp.hallId === hallId);
 
       return textOk && catOk && locOk && hallOk;
     });
@@ -118,21 +118,21 @@ export default function CalendarView() {
             className='select'
             value={locationType}
             onChange={(e) =>
-              setLocationType(e.target.value as '' | 'HALL' | 'HOME')
+              setLocationType(e.target.value as '' | 'GURDWARA' | 'OUTSIDE_GURDWARA')
             }
           >
             <option value=''>All Locations</option>
-            <option value='HALL'>Hall</option>
-            <option value='HOME'>Home</option>
+            <option value='GURDWARA'>Hall</option>
+            <option value='OUTSIDE_GURDWARA'>Home</option>
           </select>
 
           <select
             className='select'
             value={hallId}
             onChange={(e) => setHallId(e.target.value)}
-            disabled={locationType !== 'HALL'}
+            disabled={locationType !== 'GURDWARA'}
             title={
-              locationType !== 'HALL'
+              locationType !== 'GURDWARA'
                 ? 'Select Hall only when Location = Hall'
                 : ''
             }

@@ -40,7 +40,7 @@ CREATE TABLE "public"."ProgramType" (
     "requiresHall" BOOLEAN NOT NULL DEFAULT true,
     "requiresRagi" INTEGER NOT NULL DEFAULT 0,
     "requiresGranthi" INTEGER NOT NULL DEFAULT 0,
-    "canBeAtHome" BOOLEAN NOT NULL DEFAULT false,
+    "canBeOutsideGurdwara" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
 
     CONSTRAINT "ProgramType_pkey" PRIMARY KEY ("id")

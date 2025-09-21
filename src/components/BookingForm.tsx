@@ -65,7 +65,7 @@ export default function BookingForm() {
   const [submitting, setSubmitting] = useState(false);
   const [phone, setPhone] = useState<string>('');
 
-  const [locationType, setLocationType] = useState<'' | 'HALL' | 'HOME'>('');
+  const [locationType, setLocationType] = useState<'' | 'GURDWARA' | 'OUTSIDE_GURDWARA'>('');
 
   // Date + 12h time
   const now = useMemo(() => new Date(), []);
@@ -113,20 +113,20 @@ export default function BookingForm() {
 
     // location checks
     const loc = (locationType || String(fd.get('locationType') || '')) as
-      | 'HALL'
-      | 'HOME'
+      | 'GURDWARA'
+      | 'OUTSIDE_GURDWARA'
       | '';
     if (!loc) {
       setSubmitting(false);
-      setError('Please select a Location (Hall or Home).');
+      setError('Please select a Location (Gurdwara or Outside Gurdwara).');
       return;
     }
-    if (loc === 'HALL' && !String(fd.get('hallId') || '')) {
+    if (loc === 'GURDWARA' && !String(fd.get('hallId') || '')) {
       setSubmitting(false);
       setError('Please select a hall.');
       return;
     }
-    if (loc === 'HOME' && !String(fd.get('address') || '').trim()) {
+    if (loc === 'OUTSIDE_GURDWARA' && !String(fd.get('address') || '').trim()) {
       setSubmitting(false);
       setError('Please provide the home address.');
       return;
@@ -157,7 +157,7 @@ export default function BookingForm() {
       title: String(fd.get('title') || ''),
       start: startISO,
       end: endISO,
-      locationType: loc as 'HALL' | 'HOME',
+      locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
       hallId: String(fd.get('hallId') || '') || null,
       address: String(fd.get('address') || '') || null,
       contactName: String(fd.get('contactName') || ''),
@@ -388,7 +388,7 @@ export default function BookingForm() {
                   name='locationType'
                   value={locationType}
                   onChange={(e) => {
-                    const val = e.target.value as '' | 'HALL' | 'HOME';
+                    const val = e.target.value as '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
                     setLocationType(val);
                     const hallSel = document.querySelector<HTMLSelectElement>(
                       'select[name="hallId"]'
@@ -396,20 +396,20 @@ export default function BookingForm() {
                     const addrInp = document.querySelector<HTMLInputElement>(
                       'input[name="address"]'
                     );
-                    if (val === 'HALL' && addrInp) addrInp.value = '';
-                    if (val === 'HOME' && hallSel) hallSel.value = '';
+                    if (val === 'GURDWARA' && addrInp) addrInp.value = '';
+                    if (val === 'OUTSIDE_GURDWARA' && hallSel) hallSel.value = '';
                   }}
                   required
                 >
                   <option value='' disabled>
                     -- Select Location --
                   </option>
-                  <option value='HALL'>Hall</option>
-                  <option value='HOME'>Home</option>
+                  <option value='GURDWARA'>Gurdwara</option>
+                  <option value='OUTSIDE_GURDWARA'>Outside Gurdwara</option>
                 </select>
               </div>
 
-              {locationType === 'HALL' && (
+              {locationType === 'GURDWARA' && (
                 <div>
                   <label className='label'>Hall</label>
                   <select
@@ -428,7 +428,7 @@ export default function BookingForm() {
                 </div>
               )}
 
-              {locationType === 'HOME' && (
+              {locationType === 'OUTSIDE_GURDWARA' && (
                 <div className='md:col-span-2'>
                   <label className='label'>Address (Home)</label>
                   <AddressAutocomplete required />

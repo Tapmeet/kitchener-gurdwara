@@ -9,7 +9,7 @@ async function upsertProgram(
   defaultMinutes = 120
 ) {
   // All can be at home; none require a hall.
-  const canBeAtHome = true;
+  const canBeOutsideGurdwara = true;
   const requiresHall = false;
 
   await prisma.programType.upsert({
@@ -18,7 +18,7 @@ async function upsertProgram(
       category,
       requiresRagi,
       requiresGranthi,
-      canBeAtHome,
+      canBeOutsideGurdwara,
       requiresHall,
       defaultMinutes,
       isActive: true,
@@ -28,7 +28,7 @@ async function upsertProgram(
       category,
       requiresRagi,
       requiresGranthi,
-      canBeAtHome,
+      canBeOutsideGurdwara,
       requiresHall,
       defaultMinutes,
     },

@@ -16,8 +16,8 @@ enum UserRole {
 }
 
 enum LocationType {
-  HALL
-  HOME
+  GURDWARA
+  OUTSIDE_GURDWARA
 }
 
 enum ProgramCategory {
@@ -56,7 +56,7 @@ model ProgramType {
   requiresHall    Boolean         @default(true)
   requiresRagi    Int             @default(0)
   requiresGranthi Int             @default(0)
-  canBeAtHome     Boolean         @default(false)
+  canBeOutsideGurdwara     Boolean         @default(false)
   isActive        Boolean         @default(true)
 
   bookingItems BookingItem[]

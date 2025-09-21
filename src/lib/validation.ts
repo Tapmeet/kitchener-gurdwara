@@ -6,7 +6,7 @@ export const CreateBookingSchema = z.object({
   title: z.string().min(2),
   start: z.string().datetime(),
   end: z.string().datetime(),
-  locationType: z.enum(['HALL', 'HOME']),
+  locationType: z.enum(['GURDWARA', 'OUTSIDE_GURDWARA']),
   hallId: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
   contactName: z.string().min(2),

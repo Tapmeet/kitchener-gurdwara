@@ -23,13 +23,13 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (input.locationType === 'HALL' && !input.hallId) {
+    if (input.locationType === 'GURDWARA' && !input.hallId) {
       return NextResponse.json(
         { error: 'Hall is required for hall bookings' },
         { status: 400 }
       );
     }
-    if (input.locationType === 'HOME' && !input.address?.trim()) {
+    if (input.locationType === 'OUTSIDE_GURDWARA' && !input.address?.trim()) {
       return NextResponse.json(
         { error: 'Address is required for home bookings' },
         { status: 400 }
@@ -59,10 +59,10 @@ export async function POST(req: Request) {
     if (!cap.ok)
       return NextResponse.json({ error: cap.error }, { status: 409 });
 
-    if (input.locationType === 'HALL') {
+    if (input.locationType === 'GURDWARA') {
       const HALL_CAP = 2;
       const concurrentHalls = await prisma.booking.count({
-        where: { locationType: 'HALL', start: { lt: end }, end: { gt: start } },
+        where: { locationType: 'GURDWARA', start: { lt: end }, end: { gt: start } },
       });
       if (concurrentHalls >= HALL_CAP) {
         return NextResponse.json(
