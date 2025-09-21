@@ -14,7 +14,7 @@
     "// Run migrations locally against DEV DB (uses prisma/.env or root .env)": "",
     "migrate:dev": "prisma migrate dev -n init",
     "// Deploy pending migrations to the DB defined by env (add DIRECT_URL).": "",
-    "migrate:deploy": "cross-env NODE_ENV=production prisma migrate deploy",
+    "migrate:deploy": "cross-env  prisma migrate deploy",
     "// ---------- SEED ----------": "",
     "seed": "tsx prisma/seed.ts",
     "seed:dev": "dotenv -e .env -- tsx prisma/seed.ts",
