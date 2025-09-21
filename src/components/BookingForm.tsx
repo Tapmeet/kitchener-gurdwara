@@ -11,16 +11,37 @@ interface ProgramType {
   id: string;
   name: string;
   category: ProgramCategory;
-  durationMinutes: number; // used to compute end time
+  durationMinutes: number;
 }
 
 interface Hall {
   id: string;
   name: string;
-  capacity?: number | null; // optional; we also match by name
+  capacity?: number | null;
 }
 
 /* ---------- helpers ---------- */
+function todayLocalDateString() {
+  return toLocalDateString(new Date());
+}
+
+/** First selectable hour for a given date string (YYYY-MM-DD). */
+function minSelectableHour24(dateStr: string): number {
+  // Business day always starts at 7
+  const base = 7;
+  // If not today, earliest is just 7
+  if (dateStr !== todayLocalDateString()) return base;
+
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+
+  // If it's 10:00 exactly, allow 10. If 10:01+, bump to 11.
+  const nextHour = h + (m > 0 ? 1 : 0);
+
+  // Respect the 7am lower bound
+  return Math.max(base, nextHour);
+}
 function toLocalDateString(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -30,17 +51,10 @@ function toISOFromLocalDateHour(dateStr: string, hour24: number) {
   const local = new Date(y, (m ?? 1) - 1, d ?? 1, hour24, 0, 0, 0);
   return local.toISOString();
 }
-// 24h -> 12h + AM/PM
 function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
   const ap: 'AM' | 'PM' = h24 < 12 ? 'AM' : 'PM';
   const h = h24 % 12;
   return { h12: h === 0 ? 12 : h, ap };
-}
-// 12h + AM/PM -> 24h
-function from12(h12: number, ap: 'AM' | 'PM'): number {
-  let h = h12 % 12;
-  if (ap === 'PM') h += 12;
-  return h;
 }
 // phone helpers
 function digitsOnly(s: string) {
@@ -61,6 +75,20 @@ function toE164(digits: string) {
   return d ? `+1${d}` : '';
 }
 
+// 7:00 → 19:00 inclusive
+const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7); // 7..19
+
+/** Intersect business hours with server-available hours (fallback to business hours if server empty). */
+function visibleStartHours(
+  serverAvailableHours: number[] | null | undefined
+): number[] {
+  if (Array.isArray(serverAvailableHours) && serverAvailableHours.length > 0) {
+    const s = new Set(serverAvailableHours);
+    return BUSINESS_HOURS_24.filter((h) => s.has(h));
+  }
+  return BUSINESS_HOURS_24;
+}
+
 /* ---------- component ---------- */
 
 export default function BookingForm() {
@@ -75,9 +103,14 @@ export default function BookingForm() {
   // Date + time
   const now = useMemo(() => new Date(), []);
   const [date, setDate] = useState(toLocalDateString(now));
-  const init12 = to12(now.getHours());
-  const [startHour12, setStartHour12] = useState<number>(init12.h12); // 1–12
-  const [startAmPm, setStartAmPm] = useState<'AM' | 'PM'>(init12.ap);
+
+  // NEW: single 24h start time within 7–19
+  const initialStartHour24 = (() => {
+    const h = now.getHours();
+    if (h < 7 || h > 19) return 7;
+    return h;
+  })();
+  const [startHour24, setStartHour24] = useState<number>(initialStartHour24);
 
   // Program-driven duration
   const [selectedProgramId, setSelectedProgramId] = useState<string>('');
@@ -109,17 +142,15 @@ export default function BookingForm() {
         /main/i.test(h.name)
     );
 
-    // <125 => Small, otherwise Main (fallback if one not found)
     return (attendees || 0) < 125 ? small ?? main : main ?? small;
   }, [halls, locationType, attendees]);
 
   // Live end-time preview (from program duration)
   const endPreview = useMemo(() => {
-    const start24 = from12(startHour12, startAmPm);
     const addHrs = Math.ceil((durationMinutes || 0) / 60);
-    const end24 = (start24 + addHrs) % 24;
+    const end24 = (startHour24 + addHrs) % 24;
     return to12(end24);
-  }, [startHour12, startAmPm, durationMinutes]);
+  }, [startHour24, durationMinutes]);
 
   useEffect(() => {
     fetch('/api/program-types')
@@ -153,14 +184,7 @@ export default function BookingForm() {
       .then((r) => r.json())
       .then((j) => setAvailableHours(Array.isArray(j.hours) ? j.hours : []))
       .catch(() => setAvailableHours([]));
-  }, [
-    date,
-    selectedProgramId,
-    locationType,
-    attendees,
-    startAmPm,
-    autoHall?.id,
-  ]);
+  }, [date, selectedProgramId, locationType, attendees, autoHall?.id]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -202,8 +226,8 @@ export default function BookingForm() {
     }
 
     // Ensure chosen start time is still valid
-    const start24 = from12(startHour12, startAmPm);
-    if (!availableHours.includes(start24)) {
+    // Only enforce if server actually sent availability; otherwise allow fallback business hours.
+    if (availableHours.length > 0 && !availableHours.includes(startHour24)) {
       setSubmitting(false);
       setError(
         'Selected start time is no longer available. Please pick another.'
@@ -211,7 +235,17 @@ export default function BookingForm() {
       return;
     }
 
-    const startISO = toISOFromLocalDateHour(date, start24);
+    // Prevent booking in the past on the same date
+    if (
+      date === todayLocalDateString() &&
+      startHour24 < minSelectableHour24(date)
+    ) {
+      setSubmitting(false);
+      setError('Selected time has already passed. Please choose a later time.');
+      return;
+    }
+
+    const startISO = toISOFromLocalDateHour(date, startHour24);
     const endISO = new Date(
       new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
     ).toISOString();
@@ -259,9 +293,7 @@ export default function BookingForm() {
       setLocationType('');
       const n = new Date();
       setDate(toLocalDateString(n));
-      const t12 = to12(n.getHours());
-      setStartHour12(t12.h12);
-      setStartAmPm(t12.ap);
+      setStartHour24(7); // reset to earliest business hour
       setPhone('');
       setSelectedProgramId('');
       setAvailableHours([]);
@@ -315,7 +347,7 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Details (title, attendees, location, address / auto hall preview) */}
+          {/* Details */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Details
@@ -433,91 +465,68 @@ export default function BookingForm() {
                 />
               </div>
 
-              {/* 12-hour time: hour + AM/PM */}
-              <div className='grid grid-cols-2 gap-2'>
-                <div>
-                  <label className='label'>Start Hour</label>
-                  <select
-                    className='select'
-                    value={startHour12}
-                    onChange={(e) => setStartHour12(Number(e.target.value))}
-                    disabled={!selectedProgramId || !locationType}
-                  >
-                    {(() => {
-                      const period = startAmPm;
-                      const apiHours = (availableHours || []).filter(
-                        (h24) => (h24 < 12 ? 'AM' : 'PM') === period
-                      );
-                      const fallback24 =
-                        period === 'AM'
-                          ? Array.from({ length: 12 }, (_, i) => i) // 0..11
-                          : Array.from({ length: 12 }, (_, i) => i + 12); // 12..23
+              {/* NEW: single Start Time dropdown (7 AM – 7 PM) */}
+              <div>
+                <label className='label'>Start Time</label>
+                <select
+                  className='select'
+                  value={startHour24}
+                  onChange={(e) => setStartHour24(Number(e.target.value))}
+                  disabled={!selectedProgramId || !locationType}
+                >
+                  {(() => {
+                    // Intersect business hours with server-available hours
+                    let list = visibleStartHours(availableHours);
 
-                      const hoursToShow =
-                        selectedProgramId && locationType
-                          ? apiHours.length
-                            ? apiHours
-                            : fallback24
-                          : [];
-                      const options = hoursToShow.map((h24) => ({
-                        h24,
-                        h12: h24 % 12 === 0 ? 12 : h24 % 12,
-                      }));
-                      const validH12 = options.map((o) => o.h12);
-                      if (options.length && !validH12.includes(startHour12)) {
-                        setStartHour12(options[0].h12);
-                      }
+                    // Hide past times on the same day
+                    const minHour = minSelectableHour24(date);
+                    list = list.filter((h) => h >= minHour);
 
-                      return options.map(({ h24, h12 }) => (
-                        <option key={h24} value={h12}>
-                          {h12}:00 {period}
+                    // Keep selection valid
+                    if (list.length && !list.includes(startHour24)) {
+                      setStartHour24(list[0]);
+                    }
+
+                    // If the whole day is in the past (e.g., it's after 7pm), show nothing
+                    if (list.length === 0) {
+                      return (
+                        <option value='' disabled>
+                          No times available today
                         </option>
-                      ));
-                    })()}
-                  </select>
-
-                  {selectedProgramId &&
-                    locationType &&
-                    availableHours.length === 0 && (
-                      <p className='text-xs text-red-600 mt-1'>
-                        No reserved slots found from the server; showing all{' '}
-                        {startAmPm} hours as a fallback.
-                      </p>
-                    )}
-                </div>
-
-                <div>
-                  <label className='label'>AM / PM</label>
-                  <select
-                    className='select'
-                    value={startAmPm}
-                    onChange={(e) => {
-                      const nextAp = e.target.value as 'AM' | 'PM';
-                      setStartAmPm(nextAp);
-
-                      const apiHoursNext = (availableHours || []).filter(
-                        (h24) => (h24 < 12 ? 'AM' : 'PM') === nextAp
                       );
-                      const fallbackNext =
-                        nextAp === 'AM'
-                          ? Array.from({ length: 12 }, (_, i) => i)
-                          : Array.from({ length: 12 }, (_, i) => i + 12);
+                    }
 
-                      const list = apiHoursNext.length
-                        ? apiHoursNext
-                        : fallbackNext;
-                      const current24 = from12(startHour12, nextAp);
-                      if (!list.includes(current24) && list.length) {
-                        const first = list[0];
-                        const h12 = first % 12 === 0 ? 12 : first % 12;
-                        setStartHour12(h12);
-                      }
-                    }}
-                  >
-                    <option value='AM'>AM</option>
-                    <option value='PM'>PM</option>
-                  </select>
-                </div>
+                    return list.map((h24) => {
+                      const { h12, ap } = to12(h24);
+                      return (
+                        <option key={h24} value={h24}>
+                          {h12}:00 {ap}
+                        </option>
+                      );
+                    });
+                  })()}
+                </select>
+                
+                {date === todayLocalDateString() && (
+                  <p className='text-xs text-gray-500 mt-1'>
+                    Past times today are hidden.
+                  </p>
+                )}
+
+                {selectedProgramId &&
+                  locationType &&
+                  availableHours.length > 0 && (
+                    <p className='text-xs text-gray-500 mt-1'>
+                      Booked hours are hidden for {date}.
+                    </p>
+                  )}
+                {selectedProgramId &&
+                  locationType &&
+                  availableHours.length === 0 && (
+                    <p className='text-xs text-gray-500 mt-1'>
+                      Showing standard hours (7 AM–7 PM).
+                    </p>
+                  )}
               </div>
 
               {/* End-time preview */}

@@ -1,17 +1,18 @@
-// Opening hours (local time). We keep minutes to represent the 6:30 open.
-// close is the latest *end* time allowed (e.g. 22:00 = 10 PM).
-// 0=Sun, 1=Mon, ... 6=Sat (JS Date.getDay())
+// lib/businessHours.ts
+
+// Single business window for all days: 7:00–19:00 (latest *end* time = 19:00).
+// 0=Sun..6=Sat (JS Date.getDay()).
 export const BUSINESS_HOURS: Record<
   number,
   { openMinutes: number; closeMinutes: number }
 > = {
-  0: { openMinutes: 6 * 60 + 30, closeMinutes: 22 * 60 }, // Sunday 6:30–22:00
-  1: { openMinutes: 6 * 60 + 30, closeMinutes: 20 * 60 }, // Monday 6:30–20:00
-  2: { openMinutes: 6 * 60 + 30, closeMinutes: 20 * 60 }, // Tuesday
-  3: { openMinutes: 6 * 60 + 30, closeMinutes: 20 * 60 }, // Wednesday
-  4: { openMinutes: 6 * 60 + 30, closeMinutes: 20 * 60 }, // Thursday
-  5: { openMinutes: 6 * 60 + 30, closeMinutes: 20 * 60 }, // Friday
-  6: { openMinutes: 6 * 60 + 30, closeMinutes: 22 * 60 }, // Saturday 6:30–22:00
+  0: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Sunday 7:00–19:00
+  1: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Monday
+  2: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Tuesday
+  3: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Wednesday
+  4: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Thursday
+  5: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Friday
+  6: { openMinutes: 7 * 60, closeMinutes: 19 * 60 }, // Saturday
 };
 
 function toLocalMinutes(d: Date) {
@@ -34,7 +35,6 @@ export function isWithinBusinessHours(
   const e = toLocalMinutes(end);
 
   if (e <= s) return { ok: false, error: 'End time must be after start time.' };
-
   if (s < cfg.openMinutes) {
     return { ok: false, error: 'Start is before opening time for that day.' };
   }
@@ -48,22 +48,44 @@ export function isWithinBusinessHours(
 }
 
 /**
- * For hour-only UI: compute allowed hour starts (integers 0–23) given date and durationHours.
- * We round opening 6:30 up to the next full hour (7:00).
+ * Compute allowed start hours (ints 0–23) for a given date and duration (in hours),
+ * ensuring the booking ends by the day's close time.
+ * With our 7:00–19:00 window, this yields 7..(19 - durationHours).
  */
 export function allowedStartHoursFor(
   dateLocal: Date,
   durationHours: number
 ): number[] {
   const { openMinutes, closeMinutes } = BUSINESS_HOURS[dateLocal.getDay()];
-  const firstHour = Math.ceil(openMinutes / 60); // 6:30 -> 7
+  const firstHour = Math.ceil(openMinutes / 60); // 7
   const lastHourInclusive = Math.floor(
     (closeMinutes - durationHours * 60) / 60
-  ); // ensure end <= close
+  ); // e.g., for 2h: last = 17 so end=19
 
   const out: number[] = [];
-  for (let h = firstHour; h <= lastHourInclusive; h++) {
-    out.push(h);
-  }
+  for (let h = firstHour; h <= lastHourInclusive; h++) out.push(h);
   return out;
+}
+
+/**
+ * Convenience: intersect allowed hours with server-available hours
+ * (i.e., remove already-booked hours). If server list is empty/undefined,
+ * we show the allowed business hours (fallback).
+ */
+export function visibleStartHours(
+  dateLocal: Date,
+  durationHours: number,
+  serverAvailableHours?: number[] | null
+): number[] {
+  const base = allowedStartHoursFor(dateLocal, durationHours);
+  return Array.isArray(serverAvailableHours) && serverAvailableHours.length
+    ? base.filter((h) => serverAvailableHours.includes(h))
+    : base;
+}
+
+/** Pretty label like "7:00 AM", "12:00 PM", "5:00 PM". */
+export function formatHourLabel(h24: number): string {
+  const ap = h24 < 12 ? 'AM' : 'PM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:00 ${ap}`;
 }
