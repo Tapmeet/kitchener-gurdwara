@@ -28,19 +28,12 @@ function todayLocalDateString() {
 
 /** First selectable hour for a given date string (YYYY-MM-DD). */
 function minSelectableHour24(dateStr: string): number {
-  // Business day always starts at 7
-  const base = 7;
-  // If not today, earliest is just 7
+  const base = 7; // business day starts at 7
   if (dateStr !== todayLocalDateString()) return base;
-
   const now = new Date();
   const h = now.getHours();
   const m = now.getMinutes();
-
-  // If it's 10:00 exactly, allow 10. If 10:01+, bump to 11.
   const nextHour = h + (m > 0 ? 1 : 0);
-
-  // Respect the 7am lower bound
   return Math.max(base, nextHour);
 }
 function toLocalDateString(d: Date) {
@@ -158,6 +151,14 @@ export default function BookingForm() {
     return to12(end24);
   }, [startHour24, durationMinutes]);
 
+  // ---- NEW: stable keys for effects (fixes exhaustive-deps) ----
+  const selectedProgramKey = useMemo(
+    () => [...selectedProgramIds].sort().join(','), // stable regardless of order
+    [selectedProgramIds]
+  );
+  const hallId = autoHall?.id ?? null;
+
+  // Load reference data
   useEffect(() => {
     fetch('/api/program-types')
       .then((r) => r.json())
@@ -169,34 +170,52 @@ export default function BookingForm() {
       .catch(() => {});
   }, []);
 
-  // fetch availability (uses autoHall if Gurdwara)
+  // Fetch availability (uses autoHall if Gurdwara)
   useEffect(() => {
-    if (selectedProgramIds.length === 0 || !locationType) {
+    if (!selectedProgramKey || !locationType) {
       setAvailableHours([]);
       return;
     }
+
     const params = new URLSearchParams({
       date,
-      programTypeIds: selectedProgramIds.join(','), // NEW: multi programs
+      programTypeIds: selectedProgramKey,
       locationType,
       attendees: String(attendees || 1),
     });
-    if (locationType === 'GURDWARA' && autoHall?.id) {
-      params.set('hallId', autoHall.id);
+    if (locationType === 'GURDWARA' && hallId) {
+      params.set('hallId', hallId);
     }
 
     const url = `/api/availability?${params.toString()}`;
+    let aborted = false;
+
     fetch(url)
       .then((r) => r.json())
-      .then((j) => setAvailableHours(Array.isArray(j.hours) ? j.hours : []))
-      .catch(() => setAvailableHours([]));
-  }, [
-    date,
-    selectedProgramIds.join(','),
-    locationType,
-    attendees,
-    autoHall?.id,
-  ]);
+      .then((j) => {
+        if (aborted) return;
+        setAvailableHours(Array.isArray(j.hours) ? j.hours : []);
+      })
+      .catch(() => {
+        if (aborted) return;
+        setAvailableHours([]);
+      });
+
+    return () => {
+      aborted = true;
+    };
+  }, [date, selectedProgramKey, locationType, attendees, hallId]);
+
+  // Keep selected start hour valid against available/business/past filters
+  useEffect(() => {
+    const minHour = minSelectableHour24(date);
+    const allowed = visibleStartHours(availableHours).filter(
+      (h) => h >= minHour
+    );
+    if (allowed.length && !allowed.includes(startHour24)) {
+      setStartHour24(allowed[0]);
+    }
+  }, [availableHours, date, startHour24]);
 
   function toggleProgram(id: string) {
     setSelectedProgramIds((prev) =>
@@ -308,7 +327,6 @@ export default function BookingForm() {
     }
 
     if (j?.id) {
-      // ⬇️ redirect to assignments page for this booking
       router.push(`/bookings/${j.id}/assignments`);
       return;
     }
@@ -496,7 +514,7 @@ export default function BookingForm() {
                 />
               </div>
 
-              {/* Single Start Time dropdown (7 AM – 7 PM) */}
+              {/* Start Time (7 AM – 7 PM) */}
               <div>
                 <label className='label'>Start Time</label>
                 <select
@@ -506,17 +524,10 @@ export default function BookingForm() {
                   disabled={selectedProgramIds.length === 0 || !locationType}
                 >
                   {(() => {
-                    // Intersect business hours with server-available hours
-                    let list = visibleStartHours(availableHours);
-
-                    // Hide past times on the same day
                     const minHour = minSelectableHour24(date);
-                    list = list.filter((h) => h >= minHour);
-
-                    // Keep selection valid
-                    if (list.length && !list.includes(startHour24)) {
-                      setStartHour24(list[0]);
-                    }
+                    const list = visibleStartHours(availableHours).filter(
+                      (h) => h >= minHour
+                    );
 
                     if (list.length === 0) {
                       return (

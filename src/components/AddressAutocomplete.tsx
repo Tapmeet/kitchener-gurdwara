@@ -83,6 +83,7 @@ export default function AddressAutocomplete({
         setReady(true);
         setError(null);
         cleanup = () => google.maps.event.removeListener(listener);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (e: any) {
         setReady(false);
         setError('Failed to load Places');

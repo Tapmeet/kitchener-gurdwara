@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-type Ctx = { params: { id: string } };
-
-export async function GET(_req: Request, { params }: Ctx) {
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: params.id },
@@ -16,9 +17,11 @@ export async function GET(_req: Request, { params }: Ctx) {
         },
       },
     });
+
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
+
     return NextResponse.json(booking);
   } catch (e: any) {
     return NextResponse.json(

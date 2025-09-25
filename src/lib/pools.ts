@@ -11,6 +11,7 @@ export async function getTotalPoolPerRole(): Promise<RoleVector> {
   return { PATH, KIRTAN };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getMaxPerLocationPerRole(_location: 'GURDWARA' | 'OUTSIDE_GURDWARA'): RoleVector {
   return { PATH: Number.MAX_SAFE_INTEGER, KIRTAN: Number.MAX_SAFE_INTEGER };
 }

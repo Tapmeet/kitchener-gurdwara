@@ -95,7 +95,7 @@ export default function LoginPage() {
       // Success: go to the provided url or the sanitized callbackUrl
       router.push(res.url || callbackUrl);
     } catch (err) {
-      setErrorMsg('Unexpected error. Please try again.');
+      setErrorMsg('Unexpected error. Please try again.' + err);
     } finally {
       setSubmitting(false);
     }
