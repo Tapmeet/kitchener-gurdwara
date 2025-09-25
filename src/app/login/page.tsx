@@ -1,58 +1,104 @@
 'use client';
-import { FormEvent, useState, useEffect } from 'react';
+import { FormEvent, useState, useEffect, useMemo } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
+
+function sanitizeCallbackUrl(raw: string | null): string {
+  // Only allow same-origin relative paths. Everything else falls back to "/".
+  if (!raw) return '/';
+  try {
+    // Disallow absolute URLs and protocol-relative
+    if (
+      raw.startsWith('http://') ||
+      raw.startsWith('https://') ||
+      raw.startsWith('//')
+    )
+      return '/';
+    // Must start with a single slash to be a path on this site
+    if (!raw.startsWith('/')) return '/';
+    // Prevent open redirect shenanigans like "/\\evil" (very conservative)
+    if (raw.includes('\n') || raw.includes('\r')) return '/';
+    return raw;
+  } catch {
+    return '/';
+  }
+}
+
+const ERROR_MAP: Record<string, string> = {
+  OAuthSignin: 'Could not sign in with the provider.',
+  OAuthCallback: 'Provider callback failed.',
+  OAuthCreateAccount: 'Could not create account with the provider.',
+  EmailCreateAccount: 'Could not create account with email.',
+  CallbackRouteError: 'Authentication callback failed.',
+  AccessDenied: 'Access denied.',
+  Verification: 'Verification failed.',
+  CredentialsSignin: 'Invalid email or password.',
+  Configuration: 'Auth configuration error. Please contact the admin.',
+  Default: 'Unexpected error. Please try again.',
+};
 
 export default function LoginPage() {
   const params = useSearchParams();
   const router = useRouter();
-  const callbackUrl = params.get('callbackUrl') || '/';
-  const urlError = params.get('error'); // NextAuth error code (e.g., CredentialsSignin)
+
+  const callbackUrl = useMemo(
+    () => sanitizeCallbackUrl(params.get('callbackUrl')),
+    [params]
+  );
+
+  // NextAuth error code from the URL (e.g., ?error=CredentialsSignin)
+  const urlError = params.get('error');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Map NextAuth error codes to friendly messages
   useEffect(() => {
     if (!urlError) return;
-    const map: Record<string, string> = {
-      OAuthSignin: 'Could not sign in with the provider.',
-      OAuthCallback: 'Provider callback failed.',
-      OAuthCreateAccount: 'Could not create account with the provider.',
-      EmailCreateAccount: 'Could not create account with email.',
-      CallbackRouteError: 'Authentication callback failed.',
-      AccessDenied: 'Access denied.',
-      Verification: 'Verification failed.',
-      CredentialsSignin: 'Invalid email or password.',
-      Default: 'Unexpected error. Please try again.',
-    };
-    setErrorMsg(map[urlError] || 'Sign in failed.');
+    setErrorMsg(ERROR_MAP[urlError] || ERROR_MAP.Default);
   }, [urlError]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting) return;
     setErrorMsg(null);
-    setSubmitting(true);
-    const res = await signIn('credentials', {
-      email,
-      password,
-      redirect: false, // handle redirect manually for better error UI
-      callbackUrl,
-    });
-    setSubmitting(false);
 
-    if (res?.error) {
-      setErrorMsg(
-        res.error === 'CredentialsSignin'
-          ? 'Invalid email or password.'
-          : res.error
-      );
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password;
+
+    if (!trimmedEmail || !trimmedPassword) {
+      setErrorMsg('Please enter your email and password.');
       return;
     }
-    // Success: go to callbackUrl (or default)
-    router.push(res?.url || callbackUrl);
+
+    setSubmitting(true);
+    try {
+      // Requires a Credentials provider to be configured on the server.
+      const res = await signIn('credentials', {
+        email: trimmedEmail,
+        password: trimmedPassword,
+        redirect: false, // handle success/error manually
+        callbackUrl,
+      });
+
+      if (!res) {
+        setErrorMsg('No response from server. Please try again.');
+        return;
+      }
+
+      if (res.error) {
+        setErrorMsg(ERROR_MAP[res.error] || res.error || ERROR_MAP.Default);
+        return;
+      }
+
+      // Success: go to the provided url or the sanitized callbackUrl
+      router.push(res.url || callbackUrl);
+    } catch (err) {
+      setErrorMsg('Unexpected error. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -74,6 +120,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               autoComplete='email'
               required
+              disabled={submitting}
             />
           </div>
           <div>
@@ -85,6 +132,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete='current-password'
               required
+              disabled={submitting}
             />
           </div>
           <button
@@ -106,14 +154,19 @@ export default function LoginPage() {
           >
             Continue with Google
           </button>
-          <button
-            className='btn w-full'
-            onClick={() => signIn('apple', { callbackUrl })}
-            title='Apple Sign-in requires HTTPS (use a tunnel in dev)'
-            disabled={submitting}
-          >
-            Continue with Apple
-          </button>
+
+          {/* Hide Apple if you haven't configured it yet.
+             To toggle from env: set NEXT_PUBLIC_ENABLE_APPLE=true in Vercel. */}
+          {process.env.NEXT_PUBLIC_ENABLE_APPLE === 'true' && (
+            <button
+              className='btn w-full'
+              onClick={() => signIn('apple', { callbackUrl })}
+              title='Apple Sign-in requires HTTPS (use a tunnel in dev)'
+              disabled={submitting}
+            >
+              Continue with Apple
+            </button>
+          )}
         </div>
 
         <p className='text-xs text-gray-500'>
