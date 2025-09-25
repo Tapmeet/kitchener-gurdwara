@@ -122,11 +122,9 @@ export async function POST(req: Request) {
         typeof input.attendees === 'number' ? Math.max(1, input.attendees) : 1;
 
       const smallHall =
-        // @ts-expect-error optional capacity in your DB
         halls.find((h) => (h as any).capacity && (h as any).capacity <= 125) ||
         halls.find((h) => /small/i.test(h.name));
       const mainHall =
-        // @ts-expect-error optional capacity in your DB
         halls.find((h) => (h as any).capacity && (h as any).capacity > 125) ||
         halls.find((h) => /main/i.test(h.name));
 

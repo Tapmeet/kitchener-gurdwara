@@ -1,13 +1,18 @@
+// src/app/api/bookings/[id]/assignments/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+type Params = { id: string };
+
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<Params> }
 ) {
+  const { id } = await ctx.params;
+
   try {
     const booking = await prisma.booking.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         items: {
           include: {
