@@ -4,6 +4,10 @@ import Link from 'next/link';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
 
+// ✅ Vercel Analytics & Speed Insights
+import { Analytics } from '@vercel/analytics/react';
+import { SpeedInsights } from '@vercel/speed-insights/next';
+
 export const metadata: Metadata = {
   title: 'Gurdwara Booking',
   description: 'Calendar & bookings for programs',
@@ -107,16 +111,17 @@ export default async function RootLayout({
             </div>
           </div>
         </div>
-
         {/* Page */}
         <main className='container py-8'>{children}</main>
-
         {/* Footer */}
         <footer className='border-t border-black/5'>
           <div className='container py-6 text-sm text-gray-500'>
             © {new Date().getFullYear()} Gurdwara Booking
           </div>
         </footer>
+        {/* ✅ Mount Vercel trackers at the end of <body> */}
+        <Analytics /> {/* automatic pageviews + web vitals on Vercel */}
+        <SpeedInsights /> {/* real-user performance traces */}
       </body>
     </html>
   );
