@@ -7,14 +7,13 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "// ---------- PRISMA (cross-platform) ----------": "",
+    "// ---------- PRISMA ----------": "",
     "prisma:generate": "prisma generate",
     "prisma:studio": "prisma studio",
     "prisma:status": "prisma migrate status",
-    "// Run migrations locally against DEV DB (uses prisma/.env or root .env)": "",
-    "migrate:dev": "prisma migrate dev -n init",
-    "// Deploy pending migrations to the DB defined by env (add DIRECT_URL).": "",
-    "migrate:deploy": "cross-env prisma migrate deploy",
+    "migrate:init": "prisma migrate dev --name init",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
     "// ---------- SEED ----------": "",
     "seed": "tsx prisma/seed.ts",
     "seed:dev": "dotenv -e .env -- tsx prisma/seed.ts",
@@ -24,9 +23,8 @@
     "test:watch": "vitest",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "// ---------- VERCEL BUILD HOOKS ----------": "",
-    "postinstall": "prisma generate",
-    "postbuild": "prisma migrate deploy"
+    "// ---------- BUILD HOOKS ----------": "",
+    "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
