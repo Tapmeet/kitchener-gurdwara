@@ -1,43 +1,38 @@
-// src/app/bookings/[id]/assignments/page.tsx
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/auth';
-import { redirect } from 'next/navigation';
-import AssignmentsPanel from '@/components/AssignmentsPanel';
+import { NextRequest, NextResponse, URLPattern } from 'next/server';
+import { prisma } from '@/lib/db';
 
-export const dynamic = 'force-dynamic';
+export async function GET(req: NextRequest) {
+  // Read :id from the URL instead of using the 2nd arg
+  const pattern = new URLPattern({ pathname: '/api/bookings/:id/assignments' });
+  const match = pattern.exec(req.nextUrl);
+  const id = match?.pathname.groups.id;
 
-type AllowedRole = 'ADMIN' | 'SECRETARY' | 'GRANTHI' | 'LANGRI' | 'VIEWER';
-const ALLOWED = new Set<AllowedRole>([
-  'ADMIN',
-  'SECRETARY',
-  'GRANTHI',
-  'LANGRI',
-]);
-
-export default async function BookingAssignmentsPage({
-  params,
-}: {
-  params: { id?: string };
-}) {
-  const id = params?.id?.trim();
   if (!id) {
-    // No id in URL → send to home (or 404 if you prefer)
-    redirect('/');
+    return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   }
 
-  const session = await getServerSession(authOptions);
-  const role = (session?.user as { role?: AllowedRole } | undefined)?.role;
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: {
+            programType: true,
+            assignments: { include: { staff: true } },
+          },
+        },
+      },
+    });
 
-  if (!role || !ALLOWED.has(role)) {
-    redirect(
-      `/login?callbackUrl=${encodeURIComponent(`/bookings/${id}/assignments`)}`
+    if (!booking) {
+      return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(booking);
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message ?? 'Unexpected error' },
+      { status: 500 }
     );
   }
-
-  return (
-    <div className='p-6'>
-      <h1 className='text-lg font-semibold'>Assignments</h1>
-      <AssignmentsPanel bookingId={id} />
-    </div>
-  );
 }
