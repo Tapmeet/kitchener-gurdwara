@@ -38,14 +38,19 @@ export default async function RootLayout({
         <div className='bg-gradient-to-br from-blue-600 to-indigo-600 text-white'>
           <div className='container py-6'>
             <div className='flex flex-col gap-4 md:flex-row md:items-center md:justify-between'>
-              <div>
-                <h1 className='text-2xl font-bold tracking-tight'>
-                  Gurdwara Booking
-                </h1>
-                <p className='text-white/80 text-sm'>
-                  Reserve halls, home visits, and manage program capacity.
-                </p>
-              </div>
+              <Link
+                href={'/'}
+                className='decoration-2'
+              >
+                <div>
+                  <h1 className='text-2xl font-bold tracking-tight'>
+                    Gurdwara Booking
+                  </h1>
+                  <p className='text-white/80 text-sm'>
+                    Reserve halls, home visits, and manage program capacity.
+                  </p>
+                </div>
+              </Link>
 
               <nav className='flex gap-2 items-center'>
                 <Link
