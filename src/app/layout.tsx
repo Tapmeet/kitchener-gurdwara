@@ -44,10 +44,10 @@ export default async function RootLayout({
               >
                 <div>
                   <h1 className='text-2xl font-bold tracking-tight'>
-                    Gurdwara Booking
+                    Kitchener Gurdwara
                   </h1>
                   <p className='text-white/80 text-sm'>
-                    Reserve halls, home visits, and manage program capacity.
+                    Book Gurdwara halls and home occasions in minutes
                   </p>
                 </div>
               </Link>
