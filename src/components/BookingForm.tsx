@@ -407,17 +407,6 @@ export default function BookingForm() {
               </div>
 
               <div>
-                <label className='label'>Attendees</label>
-                <input
-                  className='input'
-                  type='number'
-                  min={1}
-                  value={attendees}
-                  onChange={(e) => setAttendees(Number(e.target.value) || 1)}
-                />
-              </div>
-
-              <div>
                 <label className='label'>Location</label>
                 <select
                   className='select'
@@ -434,6 +423,17 @@ export default function BookingForm() {
                   <option value='GURDWARA'>Gurdwara</option>
                   <option value='OUTSIDE_GURDWARA'>Outside Gurdwara</option>
                 </select>
+              </div>
+
+              <div>
+                <label className='label'>Attendees</label>
+                <input
+                  className='input'
+                  type='number'
+                  min={1}
+                  value={attendees}
+                  onChange={(e) => setAttendees(Number(e.target.value) || 1)}
+                />
               </div>
 
               {locationType === 'GURDWARA' && (
