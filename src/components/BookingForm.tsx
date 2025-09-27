@@ -274,6 +274,20 @@ export default function BookingForm() {
   const startHour24Ref = useRef<HTMLSelectElement | null>(null);
   const contactNameRef = useRef<HTMLInputElement | null>(null);
   const contactPhoneRef = useRef<HTMLInputElement | null>(null);
+  const successTimerRef = useRef<number | null>(null);
+
+  function flashSuccess(text: string, ms = 2500) {
+    setSuccess(text);
+    if (successTimerRef.current) window.clearTimeout(successTimerRef.current);
+    successTimerRef.current = window.setTimeout(() => setSuccess(null), ms);
+  }
+
+  // clear timer on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) window.clearTimeout(successTimerRef.current);
+    };
+  }, []);
 
   function getElementForKey(key: FieldKey): HTMLElement | null {
     switch (key) {
@@ -484,21 +498,28 @@ export default function BookingForm() {
 
     // Success
     setErrors({});
-    if (j?.id) {
-      resetAll(form); // ✅ clear all values & errors
-      router.push(`/book?created=${encodeURIComponent(j.id)}`); // then leave
-      return;
-    }
 
-    // Fallback if no id returned
-    setSuccess('✅ Path/Kirtan Booking created successfully!');
-    resetAll(form);
+    resetAll(form); // clear fields first
+    flashSuccess('✅ Path/Kirtan Booking created successfully!');
   }
 
   const invalidCls = 'border-red-500 ring-red-500 focus:ring-red-500';
 
   return (
     <section className='section'>
+      {/* Floating toast (no layout shift) */}
+      <div aria-live='polite' aria-atomic='true'>
+        {success && (
+          <div className='pointer-events-none fixed inset-x-0 top-28 z-50 flex justify-center px-4'>
+            <div
+              className='pointer-events-auto alert alert-success shadow-lg max-w-lg w-full transition-opacity duration-300'
+              role='status'
+            >
+              {success}
+            </div>
+          </div>
+        )}
+      </div>
       <div className='card p-4 md:p-6'>
         <h2 className='text-lg font-semibold mb-4'>
           Create a Path/Kirtan Booking
@@ -509,7 +530,6 @@ export default function BookingForm() {
             {errors.form}
           </div>
         )}
-        {success && <div className='alert alert-success mb-4'>{success}</div>}
 
         <form
           id='book-form'
