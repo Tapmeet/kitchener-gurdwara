@@ -1,6 +1,16 @@
 import { PrismaClient, ProgramCategory, StaffSkill } from '@prisma/client';
 const prisma = new PrismaClient();
 
+/** Halls */
+async function upsertHall(name: string, capacity: number | null) {
+  await prisma.hall.upsert({
+    where: { name }, // requires @unique on Hall.name
+    update: { capacity },
+    create: { name, capacity },
+  });
+}
+
+/** Programs */
 async function upsertProgram(
   name: string,
   category: ProgramCategory,
@@ -23,7 +33,7 @@ async function upsertProgram(
   } = opts;
 
   await prisma.programType.upsert({
-    where: { name },
+    where: { name }, // requires @unique on ProgramType.name
     update: {
       category,
       durationMinutes,
@@ -51,11 +61,12 @@ async function upsertProgram(
 }
 
 async function main() {
-  await prisma.hall.createMany({
-    data: [{ name: 'Main Hall' }, { name: 'Small Hall' }],
-    skipDuplicates: true,
-  });
+  // ----- Halls (with capacities) -----
+  await upsertHall('Small Hall', 125);
+  await upsertHall('Main Hall', 350);
+  await upsertHall('Upper Hall', 100); // new
 
+  // ----- Staff -----
   const staffData = [
     { name: 'Sevadar 1', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
     { name: 'Sevadar 2', skills: [StaffSkill.PATH, StaffSkill.KIRTAN] },
@@ -67,12 +78,13 @@ async function main() {
   ];
   for (const s of staffData) {
     await prisma.staff.upsert({
-      where: { name: s.name },
+      where: { name: s.name }, // requires @unique on Staff.name
       update: { skills: s.skills, isActive: true },
       create: { name: s.name, skills: s.skills, isActive: true },
     });
   }
 
+  // ----- Program Types -----
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
     durationMinutes: 90,
     peopleRequired: 1,
@@ -121,6 +133,15 @@ async function main() {
     minPathers: 0,
     minKirtanis: 3,
   });
+
+  console.log('✅ Seed completed');
 }
 
-main().finally(() => prisma.$disconnect());
+main()
+  .catch((e) => {
+    console.error('❌ Seed failed', e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

@@ -105,23 +105,40 @@ export default function BookingForm() {
   // Available start hours (0–23) from /api/availability
   const [availableHours, setAvailableHours] = useState<number[]>([]);
 
-  // Auto-assign hall (no user change)
+  // Auto-assign hall (Small → Main → Upper), respecting capacity
   const autoHall: Hall | undefined = useMemo(() => {
     if (locationType !== 'GURDWARA') return undefined;
     if (!halls.length) return undefined;
 
-    const small = halls.find(
-      (h) =>
-        (typeof h.capacity === 'number' && h.capacity <= 125) ||
-        /small/i.test(h.name)
-    );
-    const main = halls.find(
-      (h) =>
-        (typeof h.capacity === 'number' && h.capacity > 125) ||
-        /main/i.test(h.name)
-    );
+    // Prefer name match first, then fall back to capacity heuristics
+    const small =
+      halls.find((h) => /small/i.test(h.name)) ??
+      halls.find(
+        (h) =>
+          typeof h.capacity === 'number' &&
+          h.capacity > 100 &&
+          h.capacity <= 125
+      );
 
-    return (Number(attendees) || 0) < 125 ? small ?? main : main ?? small;
+    const main =
+      halls.find((h) => /main/i.test(h.name)) ??
+      halls.find((h) => typeof h.capacity === 'number' && h.capacity > 125);
+
+    // NEW: Upper Hall (capacity 100)
+    const upper =
+      halls.find((h) => /upper/i.test(h.name)) ??
+      halls.find((h) => typeof h.capacity === 'number' && h.capacity <= 100);
+
+    const ordered = [small, main, upper].filter(Boolean) as Hall[];
+
+    const a = Number(attendees) || 0;
+    // Pick the first hall (by preference) that can fit the attendee count.
+    const fits = (h: Hall) =>
+      typeof h.capacity === 'number' && h.capacity != null
+        ? h.capacity >= a
+        : true;
+
+    return ordered.find(fits) ?? ordered[0];
   }, [halls, locationType, attendees]);
 
   // Live end-time preview
@@ -394,8 +411,9 @@ export default function BookingForm() {
                     readOnly
                   />
                   <p className='text-xs text-gray-500 mt-1'>
-                    Based on attendees ({attendees || 0}): &lt;125 → Small Hall,
-                    ≥125 → Main Hall.
+                    Preference: <strong>Small → Main → Upper</strong>. Upper
+                    Hall capacity is <strong>100</strong>. We’ll auto-pick the
+                    first that fits {attendees || 0} attendees.
                   </p>
                 </div>
               )}
