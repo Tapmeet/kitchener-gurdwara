@@ -28,4 +28,4 @@ main()
 // npx tsx scripts/clear-bookings.ts
 
 //prod
-//npx dotenv -e .env.production -- npx tsx scripts/clear-bookings.ts
+// npx dotenv -e .env.production -- npx tsx scripts/clear-bookings.ts
