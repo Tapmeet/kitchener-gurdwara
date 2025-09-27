@@ -11,7 +11,7 @@ type Props = {
 
 export default function AddressAutocomplete({
   name = 'address',
-  placeholder = 'Street, City',
+  placeholder = 'Please use auto complete and add address like 26 Periwinkle St, Kitchener, ON N2E 4C7, Canada',
   required,
 }: Props) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';

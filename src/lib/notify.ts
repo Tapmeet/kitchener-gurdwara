@@ -1,19 +1,27 @@
 // lib/notify.ts
-// Email via Resend HTTP API. WhatsApp via Twilio.
+// Email via Resend HTTP API. SMS via Twilio.
 
 import twilio from 'twilio';
 
+// ---- Resend (Email) ----
 const resendKey = process.env.RESEND_API_KEY;
 const resendFrom = process.env.BOOKINGS_FROM_EMAIL; // e.g. "Gurdwara <onboarding@resend.dev>"
-export const NOTIFY = { adminInbox: process.env.BOOKINGS_INBOX_EMAIL };
+export const NOTIFY = Object.freeze({
+  adminInbox: process.env.BOOKINGS_INBOX_EMAIL ?? '',
+});
 
+// ---- Twilio SMS (single From number) ----
 const twilioSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-const twilioWhatsappFrom =
-  process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886'; // Twilio sandbox default
+const twilioSmsFrom = process.env.TWILIO_SMS_FROM;
 
 const twilioClient =
   twilioSid && twilioToken ? twilio(twilioSid, twilioToken) : null;
+
+// ---------- utils ----------
+function uniq<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}
 
 function parseAdminEmails(): string[] {
   const list = (process.env.ADMIN_EMAILS || '')
@@ -22,9 +30,15 @@ function parseAdminEmails(): string[] {
     .filter(Boolean);
   const inbox = process.env.BOOKINGS_INBOX_EMAIL?.trim();
   if (inbox) list.push(inbox);
-  return Array.from(new Set(list));
+  return uniq(list);
 }
 
+function isE164(s: string): boolean {
+  // +[7-15 digits] (ITU E.164)
+  return /^\+\d{7,15}$/.test(s);
+}
+
+// ---------- Emails ----------
 export function getAdminEmails(): string[] {
   return parseAdminEmails();
 }
@@ -33,9 +47,15 @@ export async function sendEmail(opts: {
   to: string | string[];
   subject: string;
   html: string;
-}) {
+}): Promise<void> {
   if (!resendKey || !resendFrom) return;
+
   const to = Array.isArray(opts.to) ? opts.to : [opts.to];
+  if (!to.length) return;
+
+  // Short timeout so bookings don’t hang on email latency
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
 
   try {
     await fetch('https://api.resend.com/emails', {
@@ -50,28 +70,55 @@ export async function sendEmail(opts: {
         subject: opts.subject,
         html: opts.html,
       }),
+      signal: controller.signal,
     });
-  } catch {
-    // Best-effort only; don't crash booking flow
+  } catch (err) {
+    console.warn(
+      'Resend email failed (ignored):',
+      (err as any)?.message ?? err
+    );
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-export async function sendWhatsApp({
+// ---------- SMS (Twilio) ----------
+export async function sendSms({
   toE164,
   text,
 }: {
   toE164: string;
   text: string;
-}) {
-  if (!twilioClient || !twilioWhatsappFrom) return;
-  await twilioClient.messages.create({
-    from: twilioWhatsappFrom,
-    to: `whatsapp:${toE164}`,
-    body: text,
-  });
+}): Promise<void> {
+  // Preserve format EXACTLY as passed in `text`
+  if (!twilioClient || !twilioSmsFrom) return;
+  // Normalize recipient (trim spaces) but require valid E.164
+  const to = toE164.replace(/\s+/g, '');
+  console.log(to);
+  if (!isE164(to)) {
+    console.warn('Invalid E.164, skipping SMS:', toE164);
+    return;
+  }
+  if (!text || !text.trim()) return;
+
+  try {
+    await twilioClient.messages.create({
+      to,
+      from: twilioSmsFrom,
+      body: text,
+    });
+  } catch (err: any) {
+    // Don’t break booking flow — just log
+    console.error('Twilio SMS failed (ignored):', {
+      status: err?.status,
+      code: err?.code,
+      message: err?.message,
+      moreInfo: err?.moreInfo,
+    });
+  }
 }
 
-/* -------- email bodies -------- */
+/* -------- message bodies (email + SMS) -------- */
 
 export function renderBookingEmailAdmin(p: {
   title: string;
@@ -127,7 +174,8 @@ export function renderBookingEmailCustomer(p: {
   `;
 }
 
-export function renderBookingWhatsApp(p: {
+// Generic text body reused for SMS (FORMAT UNCHANGED)
+export function renderBookingText(p: {
   title: string;
   date: string;
   startLocal: string;

@@ -10,14 +10,14 @@ import {
 import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 
-// Notifications (Resend + Twilio WhatsApp)
+// Notifications (Resend + SMS)
 import {
   sendEmail,
-  sendWhatsApp,
   renderBookingEmailAdmin,
   renderBookingEmailCustomer,
-  renderBookingWhatsApp,
+  sendSms,
   getAdminEmails,
+  renderBookingText,
 } from '@/lib/notify';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
@@ -351,7 +351,7 @@ export async function POST(req: Request) {
       attendees: created.attendees,
     });
 
-    // Customer email + WhatsApp
+    // Customer email + SMS
     const customerHtml = renderBookingEmailCustomer({
       title: created.title,
       date: startDate,
@@ -362,7 +362,7 @@ export async function POST(req: Request) {
       address: created.address,
     });
 
-    const whatsappText = renderBookingWhatsApp({
+    const smsText = renderBookingText({
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -394,9 +394,9 @@ export async function POST(req: Request) {
         : Promise.resolve(),
 
       created.contactPhone
-        ? sendWhatsApp({
+        ? sendSms({
             toE164: created.contactPhone,
-            text: whatsappText,
+            text: smsText,
           })
         : Promise.resolve(),
     ]);
