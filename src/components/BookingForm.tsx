@@ -120,7 +120,7 @@ export default function BookingForm() {
       : 0;
 
   // Attendees (for auto hall + availability)
-  const [attendees, setAttendees] = useState<number>(1);
+  const [attendees, setAttendees] = useState<string>('');
 
   // Available start hours (0–23) from /api/availability
   const [availableHours, setAvailableHours] = useState<number[]>([]);
@@ -141,7 +141,7 @@ export default function BookingForm() {
         /main/i.test(h.name)
     );
 
-    return (attendees || 0) < 125 ? small ?? main : main ?? small;
+    return (Number(attendees) || 0) < 125 ? small ?? main : main ?? small;
   }, [halls, locationType, attendees]);
 
   // Live end-time preview
@@ -181,8 +181,8 @@ export default function BookingForm() {
       date,
       programTypeIds: selectedProgramKey,
       locationType,
-      attendees: String(attendees || 1),
     });
+    if (attendees) params.set('attendees', attendees);
     if (locationType === 'GURDWARA' && hallId) {
       params.set('hallId', hallId);
     }
@@ -288,6 +288,12 @@ export default function BookingForm() {
     const phonePretty = phone || String(fd.get('contactPhone') || '');
     const phoneE164 = toE164(phonePretty);
 
+    if (!attendees || Number(attendees) < 1) {
+      setSubmitting(false);
+      setError('Please enter the number of attendees (at least 1).');
+      return;
+    }
+
     const payload = {
       title: String(fd.get('title') || '').trim(),
       start: startISO,
@@ -302,7 +308,7 @@ export default function BookingForm() {
       contactPhone: phoneE164,
       notes: (fd.get('notes') as string | null) || null,
       items,
-      attendees,
+      attendees: Number(attendees),
     } as const;
 
     const parsed = CreateBookingSchema.safeParse(payload);
@@ -341,7 +347,7 @@ export default function BookingForm() {
     setPhone('');
     setSelectedProgramIds([]);
     setAvailableHours([]);
-    setAttendees(1);
+    setAttendees('');
   }
 
   return (
@@ -432,7 +438,7 @@ export default function BookingForm() {
                   type='number'
                   min={1}
                   value={attendees}
-                  onChange={(e) => setAttendees(Number(e.target.value) || 1)}
+                  onChange={(e) => setAttendees(e.target.value)}
                 />
               </div>
 
