@@ -24,9 +24,6 @@
     "// ---------- BUILD HOOKS ----------": "",
     "postinstall": "prisma generate"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@auth/prisma-adapter": "^2.7.0",
     "@fullcalendar/daygrid": "^6.1.19",
