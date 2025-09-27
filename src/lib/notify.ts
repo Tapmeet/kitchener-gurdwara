@@ -94,7 +94,6 @@ export async function sendSms({
   if (!twilioClient || !twilioSmsFrom) return;
   // Normalize recipient (trim spaces) but require valid E.164
   const to = toE164.replace(/\s+/g, '');
-  console.log(to);
   if (!isE164(to)) {
     console.warn('Invalid E.164, skipping SMS:', toE164);
     return;
