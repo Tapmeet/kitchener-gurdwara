@@ -34,7 +34,8 @@ type FieldKey =
   | 'startHour24'
   | 'contactName'
   | 'contactPhone'
-  | 'hallId';
+  | 'hallId'
+  | 'contactEmail';
 
 type FieldErrors = Partial<Record<FieldKey, string>>;
 
@@ -55,6 +56,7 @@ const FRIENDLY: Record<FieldKey | 'start' | 'end' | 'items', string> = {
   start: 'Please choose a time.',
   end: 'Please choose a time.',
   items: 'Please choose a program.',
+  contactEmail: 'Please enter a valid email.',
 };
 
 function mapPathToKey(raw: unknown): FieldKey {
@@ -338,6 +340,20 @@ export default function BookingForm() {
     });
   }
 
+  function resetAll(form?: HTMLFormElement | null) {
+    setErrors({});
+    setSuccess(null);
+    setLocationType('');
+    const n = new Date();
+    setDate(toLocalDateString(n));
+    setStartHour24(7);
+    setPhone('');
+    setSelectedProgramId('');
+    setAvailableHours([]);
+    setAttendees('');
+    if (form) form.reset(); // clears uncontrolled inputs like title/notes
+  }
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSuccess(null);
@@ -392,12 +408,14 @@ export default function BookingForm() {
       nextErrors.attendees = FRIENDLY.attendees;
     }
 
+    const contactEmailRaw = String(fd.get('contactEmail') || '').trim();
+
     const payload = {
       title: String(fd.get('title') || '').trim(),
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      hallId: loc === 'GURDWARA' ? autoHall?.id ?? null : null,
+      hallId: loc === 'GURDWARA' ? (autoHall?.id ?? null) : null,
       address:
         loc === 'OUTSIDE_GURDWARA'
           ? String(fd.get('address') || '').trim() || null
@@ -407,6 +425,7 @@ export default function BookingForm() {
       notes: (fd.get('notes') as string | null) || null,
       items: selectedProgramId ? [{ programTypeId: selectedProgramId }] : [],
       attendees: Number(attendees),
+      contactEmail: contactEmailRaw || null,
     } as const;
 
     const parsed = CreateBookingSchema.safeParse(payload);
@@ -466,21 +485,14 @@ export default function BookingForm() {
     // Success
     setErrors({});
     if (j?.id) {
-      router.push(`/bookings/${j.id}/assignments`);
+      resetAll(form); // ✅ clear all values & errors
+      router.push(`/book?created=${encodeURIComponent(j.id)}`); // then leave
       return;
     }
 
-    // Fallback
+    // Fallback if no id returned
     setSuccess('✅ Path/Kirtan Booking created successfully!');
-    form.reset();
-    setLocationType('');
-    const n = new Date();
-    setDate(toLocalDateString(n));
-    setStartHour24(7);
-    setPhone('');
-    setSelectedProgramId('');
-    setAvailableHours([]);
-    setAttendees('');
+    resetAll(form);
   }
 
   const invalidCls = 'border-red-500 ring-red-500 focus:ring-red-500';
@@ -811,35 +823,24 @@ export default function BookingForm() {
             </h3>
             <div className='grid md:grid-cols-2 gap-4'>
               <div>
-                <label className='label' htmlFor='contactName'>
-                  Contact Name
-                </label>
+                <label className='label'>Contact Name</label>
                 <input
-                  ref={contactNameRef}
-                  id='contactName'
                   className={`input ${errors.contactName ? invalidCls : ''}`}
                   name='contactName'
                   required
                   placeholder='Your full name'
                   onChange={() => clearFieldError('contactName')}
-                  aria-invalid={!!errors.contactName}
-                  aria-describedby={
-                    errors.contactName ? 'err-contactName' : undefined
-                  }
                 />
                 {errors.contactName && (
-                  <p id='err-contactName' className='text-xs text-red-600 mt-1'>
+                  <p className='text-xs text-red-600 mt-1'>
                     {errors.contactName}
                   </p>
                 )}
               </div>
+
               <div>
-                <label className='label' htmlFor='contactPhone'>
-                  Phone
-                </label>
+                <label className='label'>Phone</label>
                 <input
-                  ref={contactPhoneRef}
-                  id='contactPhone'
                   className={`input ${errors.contactPhone ? invalidCls : ''}`}
                   name='contactPhone'
                   autoComplete='tel'
@@ -857,17 +858,26 @@ export default function BookingForm() {
                     e.preventDefault();
                   }}
                   required
-                  aria-invalid={!!errors.contactPhone}
-                  aria-describedby={
-                    errors.contactPhone ? 'err-contactPhone' : undefined
-                  }
                 />
                 {errors.contactPhone && (
-                  <p
-                    id='err-contactPhone'
-                    className='text-xs text-red-600 mt-1'
-                  >
+                  <p className='text-xs text-red-600 mt-1'>
                     {errors.contactPhone}
+                  </p>
+                )}
+              </div>
+
+              <div className='md:col-span-2'>
+                <label className='label'>Email (for confirmation)</label>
+                <input
+                  className={`input ${errors.contactEmail ? invalidCls : ''}`}
+                  type='email'
+                  name='contactEmail'
+                  placeholder='you@example.com'
+                  onChange={() => clearFieldError('contactEmail')}
+                />
+                {errors.contactEmail && (
+                  <p className='text-xs text-red-600 mt-1'>
+                    {errors.contactEmail}
                   </p>
                 )}
               </div>
@@ -878,13 +888,13 @@ export default function BookingForm() {
           <div className='grid gap-4 md:grid-cols-[1fr_auto]'>
             <div>
               <label className='label' htmlFor='notes'>
-                Notes
+                Any other information?
               </label>
               <textarea
                 id='notes'
                 className='textarea'
                 name='notes'
-                placeholder='Anything else we should know?'
+                placeholder='Anything else we should know or any request/clarifications?'
               />
             </div>
             <div className='flex items-end mb-2'>

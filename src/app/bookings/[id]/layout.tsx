@@ -1,14 +1,15 @@
 // app/bookings/[id]/layout.tsx
 import Link from 'next/link';
 
-export default function BookingLayout({
+export default async function BookingLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = params;
+  const { id } = await params; // ✅ await params
+
   return (
     <div className='space-y-4'>
       <nav className='text-sm text-gray-600'>
