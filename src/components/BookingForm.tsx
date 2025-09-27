@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { useRouter } from 'next/navigation';
+import { formatPhoneLive, toE164Generic } from '@/lib/phone';
 
 /* ---------- types ---------- */
 type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
@@ -25,7 +26,6 @@ interface Hall {
 function todayLocalDateString() {
   return toLocalDateString(new Date());
 }
-
 /** First selectable hour for a given date string (YYYY-MM-DD). */
 function minSelectableHour24(dateStr: string): number {
   const base = 7; // business day starts at 7
@@ -49,24 +49,6 @@ function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
   const ap: 'AM' | 'PM' = h24 < 12 ? 'AM' : 'PM';
   const h = h24 % 12;
   return { h12: h === 0 ? 12 : h, ap };
-}
-// phone helpers
-function digitsOnly(s: string) {
-  return s.replace(/\D+/g, '');
-}
-function formatPhonePretty(digits: string) {
-  const d = digitsOnly(digits).slice(0, 10);
-  const a = d.slice(0, 3);
-  const b = d.slice(3, 6);
-  const c = d.slice(6, 10);
-  if (d.length <= 3) return a;
-  if (d.length <= 6) return `(${a}) ${b}`;
-  return `(${a}) ${b}-${c}`;
-}
-function toE164(digits: string) {
-  const d = digitsOnly(digits);
-  if (d.length === 10) return `+1${d}`;
-  return d ? `+1${d}` : '';
 }
 
 // 7:00 → 19:00 inclusive
@@ -107,17 +89,15 @@ export default function BookingForm() {
   })();
   const [startHour24, setStartHour24] = useState<number>(initialStartHour24);
 
-  // Programs: MULTI-SELECT
-  const [selectedProgramIds, setSelectedProgramIds] = useState<string[]>([]);
-  const selectedPrograms = useMemo(
-    () => programTypes.filter((p) => selectedProgramIds.includes(p.id)),
-    [programTypes, selectedProgramIds]
+  // Program: SINGLE-SELECT
+  const [selectedProgramId, setSelectedProgramId] = useState<string>('');
+  const selectedProgram = useMemo(
+    () => programTypes.find((p) => p.id === selectedProgramId),
+    [programTypes, selectedProgramId]
   );
-  // Duration = max of selected programs (they run concurrently)
-  const durationMinutes =
-    selectedPrograms.length > 0
-      ? Math.max(...selectedPrograms.map((p) => p.durationMinutes || 0))
-      : 0;
+
+  // Duration = selected program duration
+  const durationMinutes = selectedProgram?.durationMinutes ?? 0;
 
   // Attendees (for auto hall + availability)
   const [attendees, setAttendees] = useState<string>('');
@@ -151,11 +131,9 @@ export default function BookingForm() {
     return to12(end24);
   }, [startHour24, durationMinutes]);
 
-  // ---- NEW: stable keys for effects (fixes exhaustive-deps) ----
-  const selectedProgramKey = useMemo(
-    () => [...selectedProgramIds].sort().join(','), // stable regardless of order
-    [selectedProgramIds]
-  );
+  // Stable key for effects
+  const selectedProgramKey = selectedProgramId || '';
+
   const hallId = autoHall?.id ?? null;
 
   // Load reference data
@@ -179,7 +157,7 @@ export default function BookingForm() {
 
     const params = new URLSearchParams({
       date,
-      programTypeIds: selectedProgramKey,
+      programTypeIds: selectedProgramKey, // server accepts CSV; single id is fine
       locationType,
     });
     if (attendees) params.set('attendees', attendees);
@@ -217,12 +195,6 @@ export default function BookingForm() {
     }
   }, [availableHours, date, startHour24]);
 
-  function toggleProgram(id: string) {
-    setSelectedProgramIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
@@ -232,12 +204,12 @@ export default function BookingForm() {
     const form = e.currentTarget;
     const fd = new FormData(form);
 
-    if (selectedProgramIds.length === 0) {
+    if (!selectedProgramId) {
       setSubmitting(false);
-      setError('Please select at least one program.');
+      setError('Please select a program.');
       return;
     }
-    const items = selectedProgramIds.map((id) => ({ programTypeId: id }));
+    const items = [{ programTypeId: selectedProgramId }];
 
     const loc = (locationType || String(fd.get('locationType') || '')) as
       | 'GURDWARA'
@@ -285,8 +257,16 @@ export default function BookingForm() {
       new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
     ).toISOString();
 
-    const phonePretty = phone || String(fd.get('contactPhone') || '');
-    const phoneE164 = toE164(phonePretty);
+    const phoneRaw = phone || String(fd.get('contactPhone') || '');
+    const phoneE164 = toE164Generic(phoneRaw); // '' means invalid
+
+    if (!phoneE164) {
+      setSubmitting(false);
+      setError(
+        'Please enter a valid phone number (include country code or use a local format).'
+      );
+      return;
+    }
 
     if (!attendees || Number(attendees) < 1) {
       setSubmitting(false);
@@ -345,7 +325,7 @@ export default function BookingForm() {
     setDate(toLocalDateString(n));
     setStartHour24(7);
     setPhone('');
-    setSelectedProgramIds([]);
+    setSelectedProgramId('');
     setAvailableHours([]);
     setAttendees('');
   }
@@ -359,43 +339,6 @@ export default function BookingForm() {
         {success && <div className='alert alert-success mb-4'>{success}</div>}
 
         <form id='book-form' className='space-y-6' onSubmit={handleSubmit}>
-          {/* Contact */}
-          <div>
-            <h3 className='text-sm font-semibold text-gray-700 mb-2'>
-              Contact
-            </h3>
-            <div className='grid md:grid-cols-2 gap-4'>
-              <div>
-                <label className='label'>Contact Name</label>
-                <input
-                  className='input'
-                  name='contactName'
-                  required
-                  placeholder='Your full name'
-                />
-              </div>
-              <div>
-                <label className='label'>Phone</label>
-                <input
-                  className='input'
-                  name='contactPhone'
-                  autoComplete='tel'
-                  inputMode='tel'
-                  placeholder='(519) 555-1234'
-                  value={phone}
-                  onChange={(e) => setPhone(formatPhonePretty(e.target.value))}
-                  onPaste={(e) => {
-                    const text = e.clipboardData.getData('text');
-                    setPhone(formatPhonePretty(text));
-                    e.preventDefault();
-                  }}
-                  maxLength={14}
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
           {/* Details */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
@@ -403,12 +346,12 @@ export default function BookingForm() {
             </h3>
             <div className='grid md:grid-cols-2 gap-4'>
               <div className='md:col-span-2'>
-                <label className='label'>Title</label>
+                <label className='label'>Reason for occasion?</label>
                 <input
                   className='input'
                   name='title'
                   required
-                  placeholder='Family Kirtan / Sukhmani Sahib'
+                  placeholder='Family Kirtan / Houswarming etc'
                 />
               </div>
 
@@ -451,8 +394,8 @@ export default function BookingForm() {
                     readOnly
                   />
                   <p className='text-xs text-gray-500 mt-1'>
-                    Based on attendees ({attendees}): &lt;125 → Small Hall, ≥125
-                    → Main Hall.
+                    Based on attendees ({attendees || 0}): &lt;125 → Small Hall,
+                    ≥125 → Main Hall.
                   </p>
                 </div>
               )}
@@ -466,24 +409,25 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Programs (MULTI) */}
+          {/* Program (SINGLE) */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
-              Programs
+              Program
             </h3>
             <div className='grid md:grid-cols-3 gap-3'>
               {programTypes.map((pt) => {
-                const checked = selectedProgramIds.includes(pt.id);
+                const checked = selectedProgramId === pt.id;
                 return (
                   <label
                     key={pt.id}
                     className='flex items-center gap-2 rounded-xl border border-black/10 p-3 hover:bg-black/5'
                   >
                     <input
-                      type='checkbox'
+                      type='radio'
+                      name='programType'
                       value={pt.id}
                       checked={checked}
-                      onChange={() => toggleProgram(pt.id)}
+                      onChange={() => setSelectedProgramId(pt.id)}
                     />
                     <span className='text-sm'>
                       {pt.name}{' '}
@@ -496,10 +440,8 @@ export default function BookingForm() {
                 );
               })}
             </div>
-            {selectedProgramIds.length === 0 && (
-              <p className='text-xs text-red-600 mt-2'>
-                Select at least one program.
-              </p>
+            {!selectedProgramId && (
+              <p className='text-xs text-red-600 mt-2'>Select a program.</p>
             )}
           </div>
 
@@ -527,7 +469,7 @@ export default function BookingForm() {
                   className='select'
                   value={startHour24}
                   onChange={(e) => setStartHour24(Number(e.target.value))}
-                  disabled={selectedProgramIds.length === 0 || !locationType}
+                  disabled={!selectedProgramId || !locationType}
                 >
                   {(() => {
                     const minHour = minSelectableHour24(date);
@@ -560,14 +502,14 @@ export default function BookingForm() {
                   </p>
                 )}
 
-                {selectedProgramIds.length > 0 &&
+                {selectedProgramId &&
                   locationType &&
                   availableHours.length > 0 && (
                     <p className='text-xs text-gray-500 mt-1'>
                       Booked hours are hidden for {date}.
                     </p>
                   )}
-                {selectedProgramIds.length > 0 &&
+                {selectedProgramId &&
                   locationType &&
                   availableHours.length === 0 && (
                     <p className='text-xs text-gray-500 mt-1'>
@@ -583,13 +525,50 @@ export default function BookingForm() {
                   <strong>
                     {endPreview.h12}:00 {endPreview.ap}
                   </strong>
-                  {selectedPrograms.length > 0 && (
+                  {selectedProgram && (
                     <span className='text-xs text-gray-500'>
                       {' '}
                       • {Math.ceil((durationMinutes || 0) / 60)}h
                     </span>
                   )}
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Contact */}
+          <div>
+            <h3 className='text-sm font-semibold text-gray-700 mb-2'>
+              Contact
+            </h3>
+            <div className='grid md:grid-cols-2 gap-4'>
+              <div>
+                <label className='label'>Contact Name</label>
+                <input
+                  className='input'
+                  name='contactName'
+                  required
+                  placeholder='Your full name'
+                />
+              </div>
+              <div>
+                <label className='label'>Phone</label>
+                <input
+                  className='input'
+                  name='contactPhone'
+                  autoComplete='tel' // allow Chrome to include +country when it knows it
+                  inputMode='tel'
+                  placeholder='+1 519 555 1234 or +91 98765 43210'
+                  value={phone}
+                  onChange={(e) => setPhone(formatPhoneLive(e.target.value))}
+                  onPaste={(e) => {
+                    const text = e.clipboardData.getData('text');
+                    setPhone(formatPhoneLive(text));
+                    e.preventDefault();
+                  }}
+                  // no maxLength; international can be longer than 14
+                  required
+                />
               </div>
             </div>
           </div>
