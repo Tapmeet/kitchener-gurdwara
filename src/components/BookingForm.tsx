@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { useRouter } from 'next/navigation';
@@ -22,13 +22,70 @@ interface Hall {
   capacity?: number | null;
 }
 
+/** Union of fields we show errors under */
+type FieldKey =
+  | 'form'
+  | 'title'
+  | 'locationType'
+  | 'address'
+  | 'attendees'
+  | 'programType'
+  | 'date'
+  | 'startHour24'
+  | 'contactName'
+  | 'contactPhone'
+  | 'hallId';
+
+type FieldErrors = Partial<Record<FieldKey, string>>;
+
+/** Friendly, simple messages per field; extras map schema keys -> our fields */
+const FRIENDLY: Record<FieldKey | 'start' | 'end' | 'items', string> = {
+  form: "Couldn't create the booking. Please try again.",
+  title: 'Please enter a reason.',
+  locationType: 'Please choose a location.',
+  address: 'Please enter the address.',
+  attendees: 'How many people are coming? (at least 1).',
+  programType: 'Please choose a program.',
+  date: 'Please choose a date.',
+  startHour24: 'Please choose a time.',
+  contactName: 'Please enter your name.',
+  contactPhone: 'Please enter a phone number.',
+  hallId: 'No hall fits this many people.',
+  // schema/server aliases:
+  start: 'Please choose a time.',
+  end: 'Please choose a time.',
+  items: 'Please choose a program.',
+};
+
+function mapPathToKey(raw: unknown): FieldKey {
+  const s = String(raw ?? '');
+  if (s === 'start' || s === 'end') return 'startHour24';
+  if (s === 'items') return 'programType';
+  const known: FieldKey[] = [
+    'form',
+    'title',
+    'locationType',
+    'address',
+    'attendees',
+    'programType',
+    'date',
+    'startHour24',
+    'contactName',
+    'contactPhone',
+    'hallId',
+  ];
+  return known.includes(s as FieldKey) ? (s as FieldKey) : 'form';
+}
+function msg(key: FieldKey, fallback?: string) {
+  return FRIENDLY[key] || fallback || 'Please check this field.';
+}
+
 /* ---------- helpers ---------- */
 function todayLocalDateString() {
   return toLocalDateString(new Date());
 }
-/** First selectable hour for a given date string (YYYY-MM-DD). */
 function minSelectableHour24(dateStr: string): number {
-  const base = 7; // business day starts at 7
+  const base = 7;
   if (dateStr !== todayLocalDateString()) return base;
   const now = new Date();
   const h = now.getHours();
@@ -51,10 +108,8 @@ function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
   return { h12: h === 0 ? 12 : h, ap };
 }
 
-// 7:00 → 19:00 inclusive
-const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7); // 7..19
+const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7);
 
-/** Intersect business hours with server-available hours (fallback to business hours if server empty). */
 function visibleStartHours(
   serverAvailableHours: number[] | null | undefined
 ): number[] {
@@ -71,7 +126,8 @@ export default function BookingForm() {
   const router = useRouter();
   const [programTypes, setProgramTypes] = useState<ProgramType[]>([]);
   const [halls, setHalls] = useState<Hall[]>([]);
-  const [error, setError] = useState<string | null>(null);
+
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [phone, setPhone] = useState<string>('');
@@ -96,21 +152,20 @@ export default function BookingForm() {
     [programTypes, selectedProgramId]
   );
 
-  // Duration = selected program duration
+  // Duration
   const durationMinutes = selectedProgram?.durationMinutes ?? 0;
 
-  // Attendees (for auto hall + availability)
+  // Attendees
   const [attendees, setAttendees] = useState<string>('');
 
-  // Available start hours (0–23) from /api/availability
+  // Available start hours
   const [availableHours, setAvailableHours] = useState<number[]>([]);
 
-  // Auto-assign hall (Small → Main → Upper), respecting capacity
+  // Auto-assign hall
   const autoHall: Hall | undefined = useMemo(() => {
     if (locationType !== 'GURDWARA') return undefined;
     if (!halls.length) return undefined;
 
-    // Prefer name match first, then fall back to capacity heuristics
     const small =
       halls.find((h) => /small/i.test(h.name)) ??
       halls.find(
@@ -124,7 +179,6 @@ export default function BookingForm() {
       halls.find((h) => /main/i.test(h.name)) ??
       halls.find((h) => typeof h.capacity === 'number' && h.capacity > 125);
 
-    // NEW: Upper Hall (capacity 100)
     const upper =
       halls.find((h) => /upper/i.test(h.name)) ??
       halls.find((h) => typeof h.capacity === 'number' && h.capacity <= 100);
@@ -132,7 +186,6 @@ export default function BookingForm() {
     const ordered = [small, main, upper].filter(Boolean) as Hall[];
 
     const a = Number(attendees) || 0;
-    // Pick the first hall (by preference) that can fit the attendee count.
     const fits = (h: Hall) =>
       typeof h.capacity === 'number' && h.capacity != null
         ? h.capacity >= a
@@ -141,16 +194,14 @@ export default function BookingForm() {
     return ordered.find(fits) ?? ordered[0];
   }, [halls, locationType, attendees]);
 
-  // Live end-time preview
+  // End-time preview
   const endPreview = useMemo(() => {
     const addHrs = Math.ceil((durationMinutes || 0) / 60);
     const end24 = (startHour24 + addHrs) % 24;
     return to12(end24);
   }, [startHour24, durationMinutes]);
 
-  // Stable key for effects
   const selectedProgramKey = selectedProgramId || '';
-
   const hallId = autoHall?.id ?? null;
 
   // Load reference data
@@ -165,7 +216,7 @@ export default function BookingForm() {
       .catch(() => {});
   }, []);
 
-  // Fetch availability (uses autoHall if Gurdwara)
+  // Fetch availability
   useEffect(() => {
     if (!selectedProgramKey || !locationType) {
       setAvailableHours([]);
@@ -174,12 +225,12 @@ export default function BookingForm() {
 
     const params = new URLSearchParams({
       date,
-      programTypeIds: selectedProgramKey, // server accepts CSV; single id is fine
+      programTypeIds: selectedProgramKey,
       locationType,
     });
     if (attendees) params.set('attendees', attendees);
     if (locationType === 'GURDWARA' && hallId) {
-      params.set('hallId', hallId);
+      params.set('hallId', hallId as string);
     }
 
     const url = `/api/availability?${params.toString()}`;
@@ -201,7 +252,7 @@ export default function BookingForm() {
     };
   }, [date, selectedProgramKey, locationType, attendees, hallId]);
 
-  // Keep selected start hour valid against available/business/past filters
+  // Keep selected start hour valid
   useEffect(() => {
     const minHour = minSelectableHour24(date);
     const allowed = visibleStartHours(availableHours).filter(
@@ -212,61 +263,118 @@ export default function BookingForm() {
     }
   }, [availableHours, date, startHour24]);
 
+  /* ---- Specific refs per field (typed to their actual elements) ---- */
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  const locationTypeRef = useRef<HTMLSelectElement | null>(null);
+  const attendeesRef = useRef<HTMLInputElement | null>(null);
+  const programTypeRef = useRef<HTMLInputElement | null>(null); // first radio
+  const dateRef = useRef<HTMLInputElement | null>(null);
+  const startHour24Ref = useRef<HTMLSelectElement | null>(null);
+  const contactNameRef = useRef<HTMLInputElement | null>(null);
+  const contactPhoneRef = useRef<HTMLInputElement | null>(null);
+
+  function getElementForKey(key: FieldKey): HTMLElement | null {
+    switch (key) {
+      case 'title':
+        return titleRef.current;
+      case 'locationType':
+        return locationTypeRef.current;
+      case 'attendees':
+        return attendeesRef.current;
+      case 'programType':
+        return programTypeRef.current;
+      case 'date':
+        return dateRef.current;
+      case 'startHour24':
+        return startHour24Ref.current;
+      case 'contactName':
+        return contactNameRef.current;
+      case 'contactPhone':
+        return contactPhoneRef.current;
+      case 'address': {
+        return typeof document !== 'undefined'
+          ? (document.querySelector('[name="address"]') as HTMLElement | null)
+          : null;
+      }
+      case 'hallId': {
+        // read-only summary input; just scroll to it
+        return typeof document !== 'undefined'
+          ? (document.querySelector(
+              '[aria-describedby="err-hallId"]'
+            ) as HTMLElement | null)
+          : null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  function focusFirstInvalid(keys: FieldErrors) {
+    const order: FieldKey[] = [
+      'programType',
+      'title',
+      'locationType',
+      'attendees',
+      'date',
+      'startHour24',
+      'contactName',
+      'contactPhone',
+      'address',
+      'hallId',
+      'form',
+    ];
+    const first = order.find((k) => keys[k]);
+    if (!first) return;
+    const el = getElementForKey(first);
+    el?.focus?.();
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }
+
+  function clearFieldError<K extends FieldKey>(k: K) {
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[k];
+      return next;
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError(null);
     setSuccess(null);
     setSubmitting(true);
 
     const form = e.currentTarget;
     const fd = new FormData(form);
 
-    if (!selectedProgramId) {
-      setSubmitting(false);
-      setError('Please select a program.');
-      return;
-    }
-    const items = [{ programTypeId: selectedProgramId }];
+    const nextErrors: FieldErrors = {};
 
+    if (!selectedProgramId) {
+      nextErrors.programType = FRIENDLY.programType;
+    }
     const loc = (locationType || String(fd.get('locationType') || '')) as
       | 'GURDWARA'
       | 'OUTSIDE_GURDWARA'
       | '';
     if (!loc) {
-      setSubmitting(false);
-      setError('Please select a Location (Gurdwara or Outside Gurdwara).');
-      return;
+      nextErrors.locationType = FRIENDLY.locationType;
     }
-    if (loc === 'GURDWARA') {
-      if (!autoHall?.id) {
-        setSubmitting(false);
-        setError('No suitable hall is available for the attendee count.');
-        return;
-      }
+    if (loc === 'GURDWARA' && !autoHall?.id) {
+      nextErrors.hallId =
+        'No hall fits this many people. Reduce the number or choose Outside Gurdwara.';
     }
     if (loc === 'OUTSIDE_GURDWARA' && !String(fd.get('address') || '').trim()) {
-      setSubmitting(false);
-      setError('Please provide the address.');
-      return;
+      nextErrors.address = FRIENDLY.address;
     }
 
-    // Ensure chosen start time is still valid (if API provided hours)
     if (availableHours.length > 0 && !availableHours.includes(startHour24)) {
-      setSubmitting(false);
-      setError(
-        'Selected start time is no longer available. Please pick another.'
-      );
-      return;
+      nextErrors.startHour24 = 'That time is taken. Please pick another time.';
     }
-
-    // Prevent booking in the past on the same date
     if (
       date === todayLocalDateString() &&
       startHour24 < minSelectableHour24(date)
     ) {
-      setSubmitting(false);
-      setError('Selected time has already passed. Please choose a later time.');
-      return;
+      nextErrors.startHour24 =
+        'That time has already passed. Pick a later time.';
     }
 
     const startISO = toISOFromLocalDateHour(date, startHour24);
@@ -275,20 +383,13 @@ export default function BookingForm() {
     ).toISOString();
 
     const phoneRaw = phone || String(fd.get('contactPhone') || '');
-    const phoneE164 = toE164Generic(phoneRaw); // '' means invalid
-
+    const phoneE164 = toE164Generic(phoneRaw);
     if (!phoneE164) {
-      setSubmitting(false);
-      setError(
-        'Please enter a valid phone number (include country code or use a local format).'
-      );
-      return;
+      nextErrors.contactPhone = FRIENDLY.contactPhone;
     }
 
     if (!attendees || Number(attendees) < 1) {
-      setSubmitting(false);
-      setError('Please enter the number of attendees (at least 1).');
-      return;
+      nextErrors.attendees = FRIENDLY.attendees;
     }
 
     const payload = {
@@ -304,17 +405,26 @@ export default function BookingForm() {
       contactName: String(fd.get('contactName') || '').trim(),
       contactPhone: phoneE164,
       notes: (fd.get('notes') as string | null) || null,
-      items,
+      items: selectedProgramId ? [{ programTypeId: selectedProgramId }] : [],
       attendees: Number(attendees),
     } as const;
 
     const parsed = CreateBookingSchema.safeParse(payload);
     if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        const key = mapPathToKey(issue.path?.[0]);
+        if (!nextErrors[key]) nextErrors[key] = msg(key, issue.message);
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
       setSubmitting(false);
-      setError(parsed.error.issues.map((i) => i.message).join('; '));
+      setErrors(nextErrors);
+      focusFirstInvalid(nextErrors);
       return;
     }
 
+    // Submit to server
     const res = await fetch('/api/bookings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -322,20 +432,46 @@ export default function BookingForm() {
     });
 
     setSubmitting(false);
-    const j = await res.json().catch(() => ({}));
+    const j: any = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      setError(j.error || 'Failed to create booking');
+      const serverErrors: FieldErrors = {};
+      if (Array.isArray(j?.issues)) {
+        for (const issue of j.issues) {
+          const key = mapPathToKey(issue?.path?.[0]);
+          const m =
+            typeof issue?.message === 'string' ? issue.message : undefined;
+          if (!serverErrors[key]) serverErrors[key] = msg(key, m);
+        }
+      } else if (j?.fieldErrors && typeof j.fieldErrors === 'object') {
+        for (const [k, v] of Object.entries(
+          j.fieldErrors as Record<string, unknown>
+        )) {
+          const key = mapPathToKey(k);
+          const first = Array.isArray(v) ? (v as any[])[0] : v;
+          const m = typeof first === 'string' ? first : undefined;
+          if (!serverErrors[key]) serverErrors[key] = msg(key, m);
+        }
+      } else if (typeof j?.error === 'string') {
+        serverErrors.form = msg('form', j.error);
+      } else {
+        serverErrors.form = msg('form');
+      }
+
+      setErrors(serverErrors);
+      focusFirstInvalid(serverErrors);
       return;
     }
 
+    // Success
+    setErrors({});
     if (j?.id) {
       router.push(`/bookings/${j.id}/assignments`);
       return;
     }
 
-    // fallback if no id returned
-    setSuccess('✅ Booking created!');
+    // Fallback
+    setSuccess('✅ Path/Kirtan Booking created successfully!');
     form.reset();
     setLocationType('');
     const n = new Date();
@@ -347,15 +483,28 @@ export default function BookingForm() {
     setAttendees('');
   }
 
+  const invalidCls = 'border-red-500 ring-red-500 focus:ring-red-500';
+
   return (
     <section className='section'>
       <div className='card p-4 md:p-6'>
-        <h2 className='text-lg font-semibold mb-4'>Create a Booking</h2>
+        <h2 className='text-lg font-semibold mb-4'>
+          Create a Path/Kirtan Booking
+        </h2>
 
-        {error && <div className='alert alert-error mb-4'>{error}</div>}
+        {errors.form && (
+          <div className='alert alert-error mb-4' role='alert'>
+            {errors.form}
+          </div>
+        )}
         {success && <div className='alert alert-success mb-4'>{success}</div>}
 
-        <form id='book-form' className='space-y-6' onSubmit={handleSubmit}>
+        <form
+          id='book-form'
+          className='space-y-6'
+          onSubmit={handleSubmit}
+          noValidate
+        >
           {/* Details */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
@@ -363,25 +512,46 @@ export default function BookingForm() {
             </h3>
             <div className='grid md:grid-cols-2 gap-4'>
               <div className='md:col-span-2'>
-                <label className='label'>Reason for occasion?</label>
+                <label className='label' htmlFor='title'>
+                  Reason for occasion?
+                </label>
                 <input
-                  className='input'
+                  ref={titleRef}
+                  id='title'
+                  className={`input ${errors.title ? invalidCls : ''}`}
                   name='title'
                   required
-                  placeholder='Family Kirtan / Houswarming etc'
+                  placeholder='Family Kirtan / Housewarming etc'
+                  onChange={() => clearFieldError('title')}
+                  aria-invalid={!!errors.title}
+                  aria-describedby={errors.title ? 'err-title' : undefined}
                 />
+                {errors.title && (
+                  <p id='err-title' className='text-xs text-red-600 mt-1'>
+                    {errors.title}
+                  </p>
+                )}
               </div>
 
               <div>
-                <label className='label'>Location</label>
+                <label className='label' htmlFor='locationType'>
+                  Location
+                </label>
                 <select
-                  className='select'
+                  ref={locationTypeRef}
+                  id='locationType'
+                  className={`select ${errors.locationType ? invalidCls : ''}`}
                   name='locationType'
                   value={locationType}
-                  onChange={(e) =>
-                    setLocationType(e.target.value as LocationType)
-                  }
+                  onChange={(e) => {
+                    setLocationType(e.target.value as LocationType);
+                    clearFieldError('locationType');
+                  }}
                   required
+                  aria-invalid={!!errors.locationType}
+                  aria-describedby={
+                    errors.locationType ? 'err-locationType' : undefined
+                  }
                 >
                   <option value='' disabled>
                     -- Select Location --
@@ -389,27 +559,60 @@ export default function BookingForm() {
                   <option value='GURDWARA'>Gurdwara</option>
                   <option value='OUTSIDE_GURDWARA'>Outside Gurdwara</option>
                 </select>
+                {errors.locationType && (
+                  <p
+                    id='err-locationType'
+                    className='text-xs text-red-600 mt-1'
+                  >
+                    {errors.locationType}
+                  </p>
+                )}
               </div>
 
               <div>
-                <label className='label'>Attendees</label>
+                <label className='label' htmlFor='attendees'>
+                  Attendees
+                </label>
                 <input
-                  className='input'
+                  ref={attendeesRef}
+                  id='attendees'
+                  className={`input ${errors.attendees ? invalidCls : ''}`}
                   type='number'
                   min={1}
                   value={attendees}
-                  onChange={(e) => setAttendees(e.target.value)}
+                  onChange={(e) => {
+                    setAttendees(e.target.value);
+                    clearFieldError('attendees');
+                  }}
+                  aria-invalid={!!errors.attendees}
+                  aria-describedby={
+                    errors.attendees ? 'err-attendees' : undefined
+                  }
                 />
+                {errors.attendees && (
+                  <p id='err-attendees' className='text-xs text-red-600 mt-1'>
+                    {errors.attendees}
+                  </p>
+                )}
               </div>
 
               {locationType === 'GURDWARA' && (
                 <div className='md:col-span-2'>
                   <label className='label'>Hall (auto-assigned)</label>
                   <input
-                    className='input bg-gray-100'
+                    className={`input bg-gray-100 ${
+                      errors.hallId ? invalidCls : ''
+                    }`}
                     value={autoHall ? autoHall.name : 'Choosing…'}
                     readOnly
+                    aria-invalid={!!errors.hallId}
+                    aria-describedby={errors.hallId ? 'err-hallId' : undefined}
                   />
+                  {errors.hallId && (
+                    <p id='err-hallId' className='text-xs text-red-600 mt-1'>
+                      {errors.hallId}
+                    </p>
+                  )}
                   <p className='text-xs text-gray-500 mt-1'>
                     Preference: <strong>Small → Main → Upper</strong>. Upper
                     Hall capacity is <strong>100</strong>. We’ll auto-pick the
@@ -422,6 +625,11 @@ export default function BookingForm() {
                 <div className='md:col-span-2'>
                   <label className='label'>Address</label>
                   <AddressAutocomplete required />
+                  {errors.address && (
+                    <p id='err-address' className='text-xs text-red-600 mt-1'>
+                      {errors.address}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -433,19 +641,30 @@ export default function BookingForm() {
               Program
             </h3>
             <div className='grid md:grid-cols-3 gap-3'>
-              {programTypes.map((pt) => {
+              {programTypes.map((pt, idx) => {
                 const checked = selectedProgramId === pt.id;
+                const radioErr = Boolean(errors.programType);
                 return (
                   <label
                     key={pt.id}
-                    className='flex items-center gap-2 rounded-xl border border-black/10 p-3 hover:bg-black/5'
+                    className={`flex items-center gap-2 rounded-xl border p-3 hover:bg-black/5 ${
+                      radioErr ? 'border-red-500' : 'border-black/10'
+                    }`}
                   >
                     <input
                       type='radio'
                       name='programType'
                       value={pt.id}
                       checked={checked}
-                      onChange={() => setSelectedProgramId(pt.id)}
+                      ref={idx === 0 ? programTypeRef : undefined}
+                      onChange={() => {
+                        setSelectedProgramId(pt.id);
+                        clearFieldError('programType');
+                      }}
+                      aria-invalid={radioErr}
+                      aria-describedby={
+                        radioErr ? 'err-programType' : undefined
+                      }
                     />
                     <span className='text-sm'>
                       {pt.name}{' '}
@@ -458,36 +677,63 @@ export default function BookingForm() {
                 );
               })}
             </div>
-            {!selectedProgramId && (
-              <p className='text-xs text-red-600 mt-2'>Select a program.</p>
+            {errors.programType && (
+              <p id='err-programType' className='text-xs text-red-600 mt-2'>
+                {errors.programType}
+              </p>
             )}
           </div>
 
-          {/* Schedule (Date & Time) */}
+          {/* Schedule */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Schedule
             </h3>
             <div className='grid md:grid-cols-2 gap-4'>
               <div>
-                <label className='label'>Date</label>
+                <label className='label' htmlFor='date'>
+                  Date
+                </label>
                 <input
-                  className='input'
+                  ref={dateRef}
+                  id='date'
+                  className={`input ${errors.date ? invalidCls : ''}`}
                   type='date'
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
+                  onChange={(e) => {
+                    setDate(e.target.value);
+                    clearFieldError('date');
+                    clearFieldError('startHour24');
+                  }}
                   required
+                  aria-invalid={!!errors.date}
+                  aria-describedby={errors.date ? 'err-date' : undefined}
                 />
+                {errors.date && (
+                  <p id='err-date' className='text-xs text-red-600 mt-1'>
+                    {errors.date}
+                  </p>
+                )}
               </div>
 
-              {/* Start Time (7 AM – 7 PM) */}
               <div>
-                <label className='label'>Start Time</label>
+                <label className='label' htmlFor='startHour24'>
+                  Start Time
+                </label>
                 <select
-                  className='select'
+                  ref={startHour24Ref}
+                  id='startHour24'
+                  className={`select ${errors.startHour24 ? invalidCls : ''}`}
                   value={startHour24}
-                  onChange={(e) => setStartHour24(Number(e.target.value))}
+                  onChange={(e) => {
+                    setStartHour24(Number(e.target.value));
+                    clearFieldError('startHour24');
+                  }}
                   disabled={!selectedProgramId || !locationType}
+                  aria-invalid={!!errors.startHour24}
+                  aria-describedby={
+                    errors.startHour24 ? 'err-startHour24' : undefined
+                  }
                 >
                   {(() => {
                     const minHour = minSelectableHour24(date);
@@ -514,12 +760,17 @@ export default function BookingForm() {
                   })()}
                 </select>
 
+                {errors.startHour24 && (
+                  <p id='err-startHour24' className='text-xs text-red-600 mt-1'>
+                    {errors.startHour24}
+                  </p>
+                )}
+
                 {date === todayLocalDateString() && (
                   <p className='text-xs text-gray-500 mt-1'>
                     Past times today are hidden.
                   </p>
                 )}
-
                 {selectedProgramId &&
                   locationType &&
                   availableHours.length > 0 && (
@@ -536,7 +787,6 @@ export default function BookingForm() {
                   )}
               </div>
 
-              {/* End-time preview */}
               <div className='md:col-span-2 -mt-2'>
                 <p className='text-xs text-gray-600'>
                   Ends at{' '}
@@ -561,32 +811,65 @@ export default function BookingForm() {
             </h3>
             <div className='grid md:grid-cols-2 gap-4'>
               <div>
-                <label className='label'>Contact Name</label>
+                <label className='label' htmlFor='contactName'>
+                  Contact Name
+                </label>
                 <input
-                  className='input'
+                  ref={contactNameRef}
+                  id='contactName'
+                  className={`input ${errors.contactName ? invalidCls : ''}`}
                   name='contactName'
                   required
                   placeholder='Your full name'
+                  onChange={() => clearFieldError('contactName')}
+                  aria-invalid={!!errors.contactName}
+                  aria-describedby={
+                    errors.contactName ? 'err-contactName' : undefined
+                  }
                 />
+                {errors.contactName && (
+                  <p id='err-contactName' className='text-xs text-red-600 mt-1'>
+                    {errors.contactName}
+                  </p>
+                )}
               </div>
               <div>
-                <label className='label'>Phone</label>
+                <label className='label' htmlFor='contactPhone'>
+                  Phone
+                </label>
                 <input
-                  className='input'
+                  ref={contactPhoneRef}
+                  id='contactPhone'
+                  className={`input ${errors.contactPhone ? invalidCls : ''}`}
                   name='contactPhone'
-                  autoComplete='tel' // allow Chrome to include +country when it knows it
+                  autoComplete='tel'
                   inputMode='tel'
                   placeholder='+1 519 555 1234 or +91 98765 43210'
                   value={phone}
-                  onChange={(e) => setPhone(formatPhoneLive(e.target.value))}
+                  onChange={(e) => {
+                    setPhone(formatPhoneLive(e.target.value));
+                    clearFieldError('contactPhone');
+                  }}
                   onPaste={(e) => {
                     const text = e.clipboardData.getData('text');
                     setPhone(formatPhoneLive(text));
+                    clearFieldError('contactPhone');
                     e.preventDefault();
                   }}
-                  // no maxLength; international can be longer than 14
                   required
+                  aria-invalid={!!errors.contactPhone}
+                  aria-describedby={
+                    errors.contactPhone ? 'err-contactPhone' : undefined
+                  }
                 />
+                {errors.contactPhone && (
+                  <p
+                    id='err-contactPhone'
+                    className='text-xs text-red-600 mt-1'
+                  >
+                    {errors.contactPhone}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -594,8 +877,11 @@ export default function BookingForm() {
           {/* Notes & Submit */}
           <div className='grid gap-4 md:grid-cols-[1fr_auto]'>
             <div>
-              <label className='label'>Notes</label>
+              <label className='label' htmlFor='notes'>
+                Notes
+              </label>
               <textarea
+                id='notes'
                 className='textarea'
                 name='notes'
                 placeholder='Anything else we should know?'
