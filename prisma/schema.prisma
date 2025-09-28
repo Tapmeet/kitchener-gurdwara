@@ -99,6 +99,7 @@ model Booking {
 
   contactName  String
   contactPhone String
+  contactEmail String?
   notes        String?
 
   createdById String?

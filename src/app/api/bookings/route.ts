@@ -48,6 +48,7 @@ type CreatedBooking = {
   address: string | null;
   contactName: string;
   contactPhone: string;
+  contactEmail: string | null;
   notes: string | null;
   attendees: number;
   hall: { name: string } | null;
@@ -298,6 +299,7 @@ export async function POST(req: Request) {
               : null,
           contactName: input.contactName,
           contactPhone: input.contactPhone,
+          contactEmail: input.contactEmail ?? null,
           notes: input.notes ?? null,
           attendees:
             typeof input.attendees === 'number'
@@ -325,6 +327,7 @@ export async function POST(req: Request) {
         address: createdRaw.address,
         contactName: createdRaw.contactName,
         contactPhone: createdRaw.contactPhone,
+        contactEmail: createdRaw.contactEmail,
         notes: createdRaw.notes,
         attendees: createdRaw.attendees,
         hall: createdRaw.hall ? { name: createdRaw.hall.name } : null,
