@@ -2,10 +2,12 @@
 // Email via Resend HTTP API. SMS via Twilio.
 
 import twilio from 'twilio';
+import 'server-only';
 
 // ---- Resend (Email) ----
 const resendKey = process.env.RESEND_API_KEY;
-const resendFrom = process.env.BOOKINGS_FROM_EMAIL; // e.g. "Gurdwara <onboarding@resend.dev>"
+const resendFrom = process.env.BOOKINGS_FROM_EMAIL;
+
 export const NOTIFY = Object.freeze({
   adminInbox: process.env.BOOKINGS_INBOX_EMAIL ?? '',
 });
@@ -47,18 +49,22 @@ export async function sendEmail(opts: {
   to: string | string[];
   subject: string;
   html: string;
-}): Promise<void> {
-  if (!resendKey || !resendFrom) return;
+}): Promise<{ id?: string }> {
+  // Fail loudly so you see it in logs, rather than silently skipping
+  if (!resendKey) throw new Error('RESEND_API_KEY is missing');
+  if (!resendFrom) throw new Error('BOOKINGS_FROM_EMAIL is missing');
 
-  const to = Array.isArray(opts.to) ? opts.to : [opts.to];
-  if (!to.length) return;
+  const to = (Array.isArray(opts.to) ? opts.to : [opts.to])
+    .map((s) => s?.trim())
+    .filter(Boolean);
+  if (!to.length) throw new Error('No recipients provided');
 
-  // Short timeout so bookings don’t hang on email latency
+  // Slightly longer timeout; Resend can take >4s occasionally
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
-    await fetch('https://api.resend.com/emails', {
+    const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${resendKey}`,
@@ -71,12 +77,23 @@ export async function sendEmail(opts: {
         html: opts.html,
       }),
       signal: controller.signal,
+      // Keepalive is safe on Node runtime; avoids some network flakiness
+      keepalive: true as any,
     });
-  } catch (err) {
-    console.warn(
-      'Resend email failed (ignored):',
-      (err as any)?.message ?? err
-    );
+
+    const body = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      // Surface the exact failure (401 bad key, 403 domain not verified, 422 invalid "from"/"to", etc.)
+      throw new Error(
+        `Resend failed ${res.status} ${res.statusText}: ${JSON.stringify(body)}`
+      );
+    }
+    return { id: (body as any)?.id };
+  } catch (err: any) {
+    // Log once with full detail, then bubble up so API route can decide to ignore or handle
+    console.error('Resend email error:', err?.message ?? err);
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
