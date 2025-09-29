@@ -3,24 +3,16 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { useCallback, useRef, useState } from 'react';
-
-type CalendarEvent = {
-  id: string;
-  title: string;
-  start: string;
-  end: string;
-  extendedProps?: {
-    locationType?: 'GURDWARA' | 'OUTSIDE_GURDWARA';
-    hallId?: string | null;
-    programs?: string[];
-  };
-};
+import type { EventInput } from '@fullcalendar/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export default function CalendarView() {
   const [loading, setLoading] = useState(true);
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [events, setEvents] = useState<EventInput[]>([]);
   const [title, setTitle] = useState<string>('');
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detail, setDetail] = useState<any | null>(null);
+
   const [view, setView] = useState<
     'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'
   >('timeGridWeek');
@@ -30,23 +22,54 @@ export default function CalendarView() {
 
   const api = () => calRef.current?.getApi();
 
+  const onEventClick = useCallback(async (arg: any) => {
+    // If the user is public, the API will 403 and we’ll no-op.
+    try {
+      const res = await fetch(`/api/bookings/${arg.event.id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setDetail(data);
+      setDetailOpen(true);
+    } catch {
+      /* swallow */
+    }
+  }, []);
+
+  const formatDT = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+    } catch {
+      return iso;
+    }
+  };
+
   // ✅ swallow AbortError so rapid navigation doesn't throw
   const fetchRange = useCallback(
     async (start: Date, end: Date, signal: AbortSignal) => {
       try {
-        const url = `/api/events?from=${encodeURIComponent(
-          start.toISOString()
-        )}&to=${encodeURIComponent(end.toISOString())}`;
+        const url = `/api/events?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(
+          end.toISOString()
+        )}`;
         const res = await fetch(url, { signal });
         const data = await res.json().catch(() => []);
-        setEvents(Array.isArray(data) ? data : []);
+        // data is an array of EventInput; public items may include classNames: ['public-booked']
+        setEvents(Array.isArray(data) ? (data as EventInput[]) : []);
       } catch (err: any) {
-        if (err?.name === 'AbortError' || err?.code === 20) return; // ignore expected aborts
+        if (err?.name === 'AbortError' || err?.code === 20) return;
         console.error(err);
       }
     },
     []
   );
+
+  useEffect(() => {
+    // Cleanup pending fetch on unmount
+    return () => abortRef.current?.abort();
+  }, []);
 
   const goto = (dir: 'prev' | 'next' | 'today') => {
     const calendar = api();
@@ -158,6 +181,7 @@ export default function CalendarView() {
         {/* Calendar */}
         <div className='fancy-fc'>
           <FullCalendar
+            eventClick={onEventClick}
             ref={calRef as any}
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView={view}
@@ -188,7 +212,7 @@ export default function CalendarView() {
               abortRef.current?.abort();
               const ac = new AbortController();
               abortRef.current = ac;
-              fetchRange(arg.start, arg.end, ac.signal); // safe: fetchRange swallows AbortError
+              fetchRange(arg.start, arg.end, ac.signal);
             }}
             events={events}
             eventContent={(arg) => {
@@ -206,14 +230,8 @@ export default function CalendarView() {
                   ${
                     chips.length
                       ? `<div class="fcgb-chips">
-                          ${chips
-                            .map((c) => `<span class="fcgb-chip">${c}</span>`)
-                            .join('')}
-                          ${
-                            more > 0
-                              ? `<span class="fcgb-chip fcgb-chip-more">+${more}</span>`
-                              : ''
-                          }
+                          ${chips.map((c) => `<span class="fcgb-chip">${c}</span>`).join('')}
+                          ${more > 0 ? `<span class="fcgb-chip fcgb-chip-more">+${more}</span>` : ''}
                         </div>`
                       : ''
                   }
@@ -258,12 +276,11 @@ export default function CalendarView() {
             border-radius: 0.75rem;
             box-shadow: 0 4px 12px rgba(2, 6, 23, 0.1);
             border: 1px solid var(--fc-event-border-color);
-            /* ⛔ was: overflow: hidden;  This clipped program chips in timeGrid */
-            overflow: visible;
+            overflow: visible; /* ensure chips not clipped */
           }
           .fancy-fc .fc-timegrid-event .fc-event {
             overflow: visible;
-          } /* ensure no clipping in time view */
+          }
 
           .fancy-fc .fc-event:hover {
             filter: brightness(1.02);
@@ -326,7 +343,129 @@ export default function CalendarView() {
             padding: 1px 0;
           }
         `}</style>
+
+        {/* Public view: grey-out booked slots */}
+        <style jsx global>{`
+          .fancy-fc .public-booked,
+          .fancy-fc .public-booked.fc-daygrid-event,
+          .fancy-fc .public-booked.fc-timegrid-event {
+            background: rgba(107, 114, 128, 0.18); /* gray-500 @ ~18% */
+            color: rgba(31, 41, 55, 0.95); /* gray-800 */
+            border-color: rgba(0, 0, 0, 0.08);
+          }
+          .fancy-fc .public-booked .fcgb-chip {
+            display: none;
+          }
+          .fancy-fc .public-booked .fcgb-title {
+            font-weight: 700;
+          }
+          .fancy-fc .public-booked .fcgb-line {
+            flex-direction: column;
+            align-items: flex-start; /* keeps left alignment */
+          }
+        `}</style>
       </div>
+
+      {detailOpen && detail && (
+        <div className='fixed inset-0 z-50 flex items-center justify-center p-4'>
+          <div
+            className='absolute inset-0 bg-black/40'
+            onClick={() => setDetailOpen(false)}
+          />
+          <div className='relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl'>
+            <div className='p-5 border-b border-black/10 flex items-center justify-between'>
+              <h2 className='text-lg font-semibold'>Booking Details</h2>
+              <button
+                className='rounded-md px-3 py-1 text-sm border border-black/10 hover:bg-black/5'
+                onClick={() => setDetailOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className='p-5 space-y-3 text-sm'>
+              <div className='grid grid-cols-2 gap-3'>
+                <div>
+                  <div className='text-gray-500'>Title</div>
+                  <div className='font-medium'>{detail.title}</div>
+                </div>
+                <div>
+                  <div className='text-gray-500'>Location</div>
+                  <div className='font-medium'>
+                    {detail.locationType === 'GURDWARA'
+                      ? detail.hall?.name || 'Gurdwara'
+                      : detail.address || '—'}
+                  </div>
+                </div>
+                <div>
+                  <div className='text-gray-500'>Start</div>
+                  <div className='font-medium'>{formatDT(detail.start)}</div>
+                </div>
+                <div>
+                  <div className='text-gray-500'>End</div>
+                  <div className='font-medium'>{formatDT(detail.end)}</div>
+                </div>
+                <div>
+                  <div className='text-gray-500'>Attendees</div>
+                  <div className='font-medium'>{detail.attendees ?? '—'}</div>
+                </div>
+                <div>
+                  <div className='text-gray-500'>Contact</div>
+                  <div className='font-medium'>
+                    {detail.contactName} ({detail.contactPhone})
+                    {detail.contactEmail ? ` · ${detail.contactEmail}` : ''}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className='text-gray-500 mb-1'>Programs</div>
+                {Array.isArray(detail.programs) && detail.programs.length ? (
+                  <div className='flex flex-wrap gap-2'>
+                    {detail.programs.map((p: any) => (
+                      <span
+                        key={p.id}
+                        className='inline-block rounded-full border px-3 py-1 text-xs'
+                      >
+                        {p.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div>—</div>
+                )}
+              </div>
+
+              <div>
+                <div className='text-gray-500 mb-1'>Assignments</div>
+                {Array.isArray(detail.assignments) &&
+                detail.assignments.length ? (
+                  <div className='space-y-1'>
+                    {detail.assignments.map((a: any) => (
+                      <div key={a.id} className='flex items-center gap-2'>
+                        <span className='rounded bg-black/5 px-2 py-0.5 text-xs'>
+                          {a.programType?.name ?? '—'}
+                        </span>
+                        <span className='text-sm'>
+                          {a.staff?.name ?? 'Unassigned'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div>—</div>
+                )}
+              </div>
+
+              {detail.notes && (
+                <div>
+                  <div className='text-gray-500 mb-1'>Notes</div>
+                  <div className='whitespace-pre-wrap'>{detail.notes}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
