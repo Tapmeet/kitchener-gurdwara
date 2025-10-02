@@ -67,10 +67,7 @@ model ProgramType {
   id                   String          @id @default(cuid())
   name                 String          @unique
   category             ProgramCategory
-  defaultMinutes       Int             @default(120)
   requiresHall         Boolean         @default(true)
-  requiresRagi         Int             @default(0)
-  requiresGranthi      Int             @default(0)
   canBeOutsideGurdwara Boolean         @default(false)
   isActive             Boolean         @default(true)
 

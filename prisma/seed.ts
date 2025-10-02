@@ -43,7 +43,6 @@ async function upsertProgram(
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
-      defaultMinutes: durationMinutes,
     },
     create: {
       name,
@@ -55,7 +54,6 @@ async function upsertProgram(
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
-      defaultMinutes: durationMinutes,
     },
   });
 }
@@ -64,7 +62,7 @@ async function main() {
   // ----- Halls (with capacities) -----
   await upsertHall('Small Hall', 125);
   await upsertHall('Main Hall', 350);
-  await upsertHall('Upper Hall', 100); // new
+  await upsertHall('Upper Hall', 100);
 
   // ----- Staff -----
   const staffData = [
@@ -78,7 +76,7 @@ async function main() {
   ];
   for (const s of staffData) {
     await prisma.staff.upsert({
-      where: { name: s.name }, // requires @unique on Staff.name
+      where: { name: s.name },
       update: { skills: s.skills, isActive: true },
       create: { name: s.name, skills: s.skills, isActive: true },
     });
