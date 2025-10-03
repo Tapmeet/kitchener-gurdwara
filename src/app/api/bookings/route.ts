@@ -1,4 +1,3 @@
-// src/app/api/bookings/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { CreateBookingSchema } from '@/lib/validation';
@@ -10,7 +9,6 @@ import {
 import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 
-// Notifications (Resend + SMS)
 import {
   sendEmail,
   renderBookingEmailAdmin,
@@ -19,10 +17,12 @@ import {
   getAdminEmails,
   renderBookingText,
 } from '@/lib/notify';
+import { auth } from '@/lib/auth';
+import { autoAssignForBooking } from '@/lib/auto-assign';
+import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
-/** Accept Date | string | number for easy Prisma Dates */
 function toLocalParts(input: Date | string | number) {
   const d = input instanceof Date ? input : new Date(input);
   const date = d.toLocaleDateString(undefined, {
@@ -37,7 +37,6 @@ function toLocalParts(input: Date | string | number) {
   return { date, time };
 }
 
-/** Minimal shape we need after create (includes hall name) */
 type CreatedBooking = {
   id: string;
   title: string;
@@ -56,17 +55,22 @@ type CreatedBooking = {
 
 export async function POST(req: Request) {
   try {
+    let session: any | null = null;
+    try {
+      session = await auth();
+    } catch {
+      session = null;
+    }
+
     const body = await req.json();
     const parsed = CreateBookingSchema.safeParse(body);
-    if (!parsed.success) {
+    if (!parsed.success)
       return NextResponse.json(
         { error: 'Invalid payload', details: parsed.error.flatten() },
         { status: 400 }
       );
-    }
     const input = parsed.data;
 
-    // Address rule for outside
     if (input.locationType === 'OUTSIDE_GURDWARA' && !input.address?.trim()) {
       return NextResponse.json(
         { error: 'Address is required for outside bookings' },
@@ -74,7 +78,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Business hours validation
     const start = new Date(input.start);
     const end = new Date(input.end ?? input.start);
     const bh = isWithinBusinessHours(start, end) as
@@ -89,14 +92,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reason }, { status: 400 });
     }
 
-    // Load selected programs
-    const ptIds = (input.items || []).map((i) => i.programTypeId);
-    if (ptIds.length === 0) {
+    const ptIds = (input.items || []).map((i: any) => i.programTypeId);
+    if (!ptIds.length)
       return NextResponse.json(
         { error: 'At least one program must be selected.' },
         { status: 400 }
       );
-    }
     const programs = await prisma.programType.findMany({
       where: { id: { in: ptIds } },
       select: {
@@ -107,14 +108,12 @@ export async function POST(req: Request) {
         requiresHall: true,
       },
     });
-    if (programs.length !== ptIds.length) {
+    if (programs.length !== ptIds.length)
       return NextResponse.json(
         { error: 'Invalid program types' },
         { status: 400 }
       );
-    }
 
-    // Location rules
     if (
       input.locationType === 'OUTSIDE_GURDWARA' &&
       programs.some((p) => !p.canBeOutsideGurdwara)
@@ -125,13 +124,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Role vector required by THIS booking
     const required: RoleVector = programs.reduce(
       (acc, p) => add(acc, reqFromProgram(p)),
       { PATH: 0, KIRTAN: 0 }
     );
 
-    // Gurdwara hall concurrency cap (global 2)
     if (input.locationType === 'GURDWARA') {
       const HALL_CAP = 2;
       const concurrentHalls = await prisma.booking.count({
@@ -141,44 +138,36 @@ export async function POST(req: Request) {
           end: { gt: start },
         },
       });
-      if (concurrentHalls >= HALL_CAP) {
+      if (concurrentHalls >= HALL_CAP)
         return NextResponse.json(
           { error: 'Both halls are occupied at that time.' },
           { status: 409 }
         );
-      }
     }
 
-    // ✅ Auto-assign hall on server
     let hallId: string | null = null;
     if (input.locationType === 'GURDWARA') {
       const halls = await prisma.hall.findMany({ where: { isActive: true } });
-
       const attendees =
         typeof input.attendees === 'number' ? Math.max(1, input.attendees) : 1;
-
       const smallHall =
-        halls.find((h) => (h as any).capacity && (h as any).capacity <= 125) ||
+        halls.find((h: any) => h.capacity && h.capacity <= 125) ||
         halls.find((h) => /small/i.test(h.name));
       const mainHall =
-        halls.find((h) => (h as any).capacity && (h as any).capacity > 125) ||
+        halls.find((h: any) => h.capacity && h.capacity > 125) ||
         halls.find((h) => /main/i.test(h.name));
-
       const pick =
         attendees < 125
           ? (smallHall ?? mainHall ?? null)
           : (mainHall ?? smallHall ?? null);
-
-      if (!pick) {
+      if (!pick)
         return NextResponse.json(
           { error: 'No suitable hall is available for the attendee count.' },
           { status: 409 }
         );
-      }
       hallId = pick.id;
     }
 
-    // Apply buffer for outside
     const candStart =
       input.locationType === 'OUTSIDE_GURDWARA'
         ? new Date(start.getTime() - OUTSIDE_BUFFER_MS)
@@ -191,30 +180,24 @@ export async function POST(req: Request) {
     const hours = hourSpan(candStart, candEnd).filter((h) =>
       BUSINESS_HOURS_24.includes(h)
     );
-    if (!hours.length) {
+    if (!hours.length)
       return NextResponse.json(
         { error: 'Selected time is outside business hours.' },
         { status: 400 }
       );
-    }
 
-    // ---- Atomic capacity check + create ----
     const created: CreatedBooking = await prisma.$transaction(async (tx) => {
-      // Pull overlapping bookings
       const overlaps = await tx.booking.findMany({
         where: { start: { lte: candEnd }, end: { gte: candStart } },
         include: {
           items: {
             include: {
-              programType: {
-                select: { minPathers: true, minKirtanis: true },
-              },
+              programType: { select: { minPathers: true, minKirtanis: true } },
             },
           },
         },
       });
 
-      // Build used vectors per hour per location
       const usedGW: Record<number, RoleVector> = {};
       const usedOUT: Record<number, RoleVector> = {};
       for (const h of BUSINESS_HOURS_24) {
@@ -224,10 +207,9 @@ export async function POST(req: Request) {
 
       for (const b of overlaps) {
         const vec = b.items.reduce(
-          (acc, it) => add(acc, reqFromProgram(it.programType as any)),
+          (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
           { PATH: 0, KIRTAN: 0 }
         );
-
         const s = new Date(b.start);
         const e = new Date(b.end);
         const paddedStart =
@@ -238,11 +220,9 @@ export async function POST(req: Request) {
           b.locationType === 'OUTSIDE_GURDWARA'
             ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
             : e;
-
         const hrs = hourSpan(paddedStart, paddedEnd).filter((h) =>
           BUSINESS_HOURS_24.includes(h)
         );
-
         for (const h of hrs) {
           if (b.locationType === 'GURDWARA') {
             usedGW[h].PATH += vec.PATH ?? 0;
@@ -254,11 +234,9 @@ export async function POST(req: Request) {
         }
       }
 
-      // Current pool + per-location caps
       const totalPool = await getTotalPoolPerRole();
       const locMax = getMaxPerLocationPerRole(input.locationType);
 
-      // Ensure capacity for each hour
       for (const h of hours) {
         for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
           const total = totalPool[r] ?? 0;
@@ -270,22 +248,17 @@ export async function POST(req: Request) {
             input.locationType === 'GURDWARA'
               ? (usedGW[h][r] ?? 0)
               : (usedOUT[h][r] ?? 0);
-
           const sharedLimit = Math.max(0, total - usedOpp);
           const locLimit = Math.min(
             sharedLimit,
             locMax[r] ?? Number.MAX_SAFE_INTEGER
           );
-
           const remaining = Math.max(0, locLimit - usedHere);
           const need = (required[r] ?? 0) as number;
-          if (remaining < need) {
-            throw new Error('CAPACITY_EXCEEDED');
-          }
+          if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
         }
       }
 
-      // Capacity ok → create booking
       const createdRaw = await tx.booking.create({
         data: {
           title: input.title,
@@ -305,18 +278,16 @@ export async function POST(req: Request) {
             typeof input.attendees === 'number'
               ? Math.max(1, input.attendees)
               : 1,
+          createdById: session?.user?.id ?? null,
           items: {
-            create: input.items.map((i) => ({
+            create: input.items.map((i: any) => ({
               programTypeId: i.programTypeId,
             })),
           },
         },
-        include: {
-          hall: { select: { name: true } },
-        },
+        include: { hall: { select: { name: true } } },
       });
 
-      // Normalize to the shape we use later
       const normalized: CreatedBooking = {
         id: createdRaw.id,
         title: createdRaw.title,
@@ -332,15 +303,30 @@ export async function POST(req: Request) {
         attendees: createdRaw.attendees,
         hall: createdRaw.hall ? { name: createdRaw.hall.name } : null,
       };
-
       return normalized;
     });
 
-    // Build display dates
+    // Auto-assign + staff notify (best-effort)
+    if (process.env.AUTO_ASSIGN_ENABLED === '1') {
+      try {
+        const res = await autoAssignForBooking(created.id);
+        if (res?.created?.length && process.env.ASSIGN_NOTIFICATIONS === '1') {
+          await notifyAssignmentsStaff(
+            created.id,
+            res.created.map((a) => ({
+              staffId: a.staffId,
+              bookingItemId: a.bookingItemId,
+            }))
+          );
+        }
+      } catch (e) {
+        console.error('Auto-assign or notify failed', e);
+      }
+    }
+
     const { date: startDate, time: startTime } = toLocalParts(created.start);
     const { time: endTime } = toLocalParts(created.end);
 
-    // Admin notification email (includes attendees)
     const adminHtml = renderBookingEmailAdmin({
       title: created.title,
       date: startDate,
@@ -354,7 +340,6 @@ export async function POST(req: Request) {
       attendees: created.attendees,
     });
 
-    // Customer email + SMS
     const customerHtml = renderBookingEmailCustomer({
       title: created.title,
       date: startDate,
@@ -375,8 +360,7 @@ export async function POST(req: Request) {
       address: created.address,
     });
 
-    // Recipients
-    const adminRecipients = getAdminEmails(); // from ADMIN_EMAILS + BOOKINGS_INBOX_EMAIL
+    const adminRecipients = getAdminEmails();
     const customerEmail = (parsed.data as any).contactEmail as string | null;
 
     await Promise.allSettled([
@@ -387,7 +371,6 @@ export async function POST(req: Request) {
             html: adminHtml,
           })
         : Promise.resolve(),
-
       customerEmail
         ? sendEmail({
             to: customerEmail,
@@ -395,19 +378,14 @@ export async function POST(req: Request) {
             html: customerHtml,
           })
         : Promise.resolve(),
-
       created.contactPhone
-        ? sendSms({
-            toE164: created.contactPhone,
-            text: smsText,
-          })
+        ? sendSms({ toE164: created.contactPhone, text: smsText })
         : Promise.resolve(),
     ]);
 
-    // Return an id so the client can redirect
     return NextResponse.json({ id: created.id }, { status: 201 });
   } catch (e: any) {
-    if (String(e?.message) === 'CAPACITY_EXCEEDED') {
+    if (String(e?.message) === 'CAPACITY_EXCEEDED')
       return NextResponse.json(
         {
           error:
@@ -415,7 +393,7 @@ export async function POST(req: Request) {
         },
         { status: 409 }
       );
-    }
+    console.error('Booking create error', e);
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
   }
 }

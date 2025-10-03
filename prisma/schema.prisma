@@ -32,6 +32,11 @@ enum StaffSkill {
   KIRTAN
 }
 
+enum Jatha {
+  A
+  B
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -134,6 +139,10 @@ model Staff {
   isActive  Boolean      @default(true)
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+
+  jatha Jatha?
+  email String? @unique
+  phone String?
 
   assignments BookingAssignment[] @relation("StaffAssignments")
 }
