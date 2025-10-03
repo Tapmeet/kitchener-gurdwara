@@ -1,150 +1,172 @@
-import { prisma } from "@/lib/db";
-import { startOfWeek, endOfWeek } from "date-fns";
-import { ProgramCategory } from "@prisma/client";
-
-type Role = "PATH" | "KIRTAN";
+// src/lib/auto-assign.ts
+import { prisma } from '@/lib/db';
+import {
+  availableJathaMembers,
+  availablePathOnly,
+  orderByWeightedLoad,
+  pickJathaForSlot,
+  Role,
+} from '@/lib/fairness';
 
 export type AssignResult = {
-  created: { staffId: string; bookingItemId: string; role: Role }[];
+  created: { staffId: string; bookingItemId: string }[];
   shortages: { itemId: string; role: Role; needed: number }[];
+  pickedJatha?: 'A' | 'B' | null;
 };
 
-function overlapWhere(startAt: Date, endAt: Date) {
-  return { start: { lt: endAt }, end: { gt: startAt } };
-}
-
-async function busyStaffIds(startAt: Date, endAt: Date) {
-  const rows = await prisma.bookingAssignment.findMany({
-    where: { booking: overlapWhere(startAt, endAt) },
-    select: { staffId: true },
-  });
-  return new Set(rows.map((r) => r.staffId));
-}
-
-async function orderStaffByWeeklyCategoryLoad(
-  staffIds: string[],
-  category: ProgramCategory,
-  weekOf: Date
-) {
-  if (!staffIds.length) return [];
-  const ws = startOfWeek(weekOf, { weekStartsOn: 1 });
-  const we = endOfWeek(weekOf, { weekStartsOn: 1 });
-
-  const rows = await prisma.bookingAssignment.findMany({
-    where: {
-      staffId: { in: staffIds },
-      booking: { start: { gte: ws }, end: { lte: we } },
-      bookingItem: { programType: { category } },
-    },
-    select: { staffId: true },
-  });
-
-  const counts = new Map<string, number>();
-  for (const id of staffIds) counts.set(id, 0);
-  for (const r of rows) counts.set(r.staffId, (counts.get(r.staffId) ?? 0) + 1);
-
-  return staffIds.sort((a, b) => (counts.get(a)! - counts.get(b)!));
-}
-
-export async function autoAssignForBooking(bookingId: string) {
+export async function autoAssignForBooking(
+  bookingId: string
+): Promise<AssignResult> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { items: { include: { programType: true } } },
   });
-  if (!booking) throw new Error("Booking not found");
+  if (!booking) throw new Error('Booking not found');
 
-  const created: { staffId: string; bookingItemId: string; role: Role }[] = [];
-  const shortages: { itemId: string; role: Role; needed: number }[] = [];
+  const start = booking.start;
+  const end = booking.end;
 
-  const startAt = booking.start;
-  const endAt = booking.end;
-  const busy = await busyStaffIds(startAt, endAt);
+  const created: AssignResult['created'] = [];
+  const shortages: AssignResult['shortages'] = [];
 
   const kirtanItems = booking.items.filter(
     (i) =>
-      i.programType.category === ProgramCategory.KIRTAN ||
+      i.programType.category === 'KIRTAN' ||
       (i.programType.minKirtanis ?? 0) > 0
   );
   const pathItems = booking.items.filter(
     (i) =>
-      i.programType.category === ProgramCategory.PATH ||
-      (i.programType.minPathers ?? 0) > 0
+      i.programType.category === 'PATH' || (i.programType.minPathers ?? 0) > 0
   );
 
-  // Kirtan
+  // KIRTAN
+  let chosenJatha: 'A' | 'B' | null = null;
   if (kirtanItems.length) {
-    const allK = await prisma.staff.findMany({
-      where: { isActive: true, skills: { has: "KIRTAN" } },
-      select: { id: true },
-    });
-    const freeK = allK.filter((s) => !busy.has(s.id)).map((s) => s.id);
-    const orderedK = await orderStaffByWeeklyCategoryLoad(
-      freeK,
-      ProgramCategory.KIRTAN,
-      startAt
-    );
-    for (const item of kirtanItems) {
-      const need = Math.max(1, item.programType.minKirtanis ?? 0) || 3;
-      const existing = await prisma.bookingAssignment.count({ where: { bookingItemId: item.id } });
-      const remaining = Math.max(0, need - existing);
-      if (remaining <= 0) continue;
+    chosenJatha = (await pickJathaForSlot(start, end)) ?? null;
+    if (chosenJatha) {
+      let avail = await availableJathaMembers(chosenJatha, start, end);
+      const ordered = await orderByWeightedLoad(
+        avail.map((m) => m.id),
+        'KIRTAN'
+      );
+      const trio = ordered.slice(0, 3);
 
-      const take = orderedK.slice(0, remaining);
-      if (!take.length) {
-        shortages.push({ itemId: item.id, role: "KIRTAN", needed: remaining });
-        continue;
+      for (const item of kirtanItems) {
+        if (trio.length < 3) {
+          shortages.push({
+            itemId: item.id,
+            role: 'KIRTAN',
+            needed: 3 - trio.length,
+          });
+          continue;
+        }
+        await prisma.bookingAssignment.createMany({
+          data: trio.map((staffId) => ({
+            bookingId: booking.id,
+            bookingItemId: item.id,
+            staffId,
+          })),
+          skipDuplicates: true,
+        });
+        trio.forEach((staffId) =>
+          created.push({ staffId, bookingItemId: item.id })
+        );
       }
-      await prisma.bookingAssignment.createMany({
-        data: take.map((id) => ({ bookingId: booking.id, bookingItemId: item.id, staffId: id })),
-        skipDuplicates: true,
-      });
-      take.forEach((id) => created.push({ staffId: id, bookingItemId: item.id, role: "KIRTAN" }));
+    } else {
+      for (const item of kirtanItems) {
+        shortages.push({ itemId: item.id, role: 'KIRTAN', needed: 3 });
+      }
     }
   }
 
-  // Path
+  // PATH
   if (pathItems.length) {
-    const granthi = await prisma.staff.findFirst({
-      where: { isActive: true, skills: { has: "PATH" }, name: { equals: "Granthi", mode: "insensitive" } },
-      select: { id: true },
-    });
-    const granthiFree = granthi && !busy.has(granthi.id) ? granthi.id : null;
+    const pathOnly = await availablePathOnly(start, end);
+    const pathOnlyOrdered = await orderByWeightedLoad(
+      pathOnly.map((p) => p.id),
+      'PATH'
+    );
 
-    const allP = await prisma.staff.findMany({
-      where: { isActive: true, skills: { has: "PATH" } },
-      select: { id: true },
-    });
-    const freeP = allP.filter((s) => !busy.has(s.id)).map((s) => s.id);
-    const orderedP = await orderStaffByWeeklyCategoryLoad(freeP, ProgramCategory.PATH, startAt);
+    const jathaFirst = chosenJatha ?? (await pickJathaForSlot(start, end));
+    const jathaSecond =
+      jathaFirst === 'A' ? 'B' : jathaFirst === 'B' ? 'A' : null;
+
+    const j1Avail = jathaFirst
+      ? await availableJathaMembers(jathaFirst, start, end)
+      : [];
+    const j2Avail = jathaSecond
+      ? await availableJathaMembers(jathaSecond, start, end)
+      : [];
+
+    const j1Ordered = await orderByWeightedLoad(
+      j1Avail.map((m) => m.id),
+      'PATH'
+    );
+    const j2Ordered = await orderByWeightedLoad(
+      j2Avail.map((m) => m.id),
+      'PATH'
+    );
 
     for (const item of pathItems) {
-      const need = Math.max(1, item.programType.minPathers ?? 0);
-      const existing = await prisma.bookingAssignment.count({ where: { bookingItemId: item.id } });
+      const need = Math.max(1, item.programType.minPathers ?? 1);
+      const existing = await prisma.bookingAssignment.count({
+        where: {
+          bookingItemId: item.id,
+          staff: { skills: { has: 'PATH' } },
+        },
+      });
       let remaining = Math.max(0, need - existing);
       if (remaining <= 0) continue;
 
-      if (granthiFree && remaining > 0) {
-        await prisma.bookingAssignment.create({
-          data: { bookingId: booking.id, bookingItemId: item.id, staffId: granthiFree },
-        });
-        created.push({ staffId: granthiFree, bookingItemId: item.id, role: "PATH" });
-        remaining--;
+      const picks: string[] = [];
+
+      for (const sid of pathOnlyOrdered) {
+        if (remaining <= 0) break;
+        if (!picks.includes(sid)) {
+          picks.push(sid);
+          remaining--;
+        }
       }
 
       if (remaining > 0) {
-        const take = orderedP.slice(0, remaining);
-        if (!take.length) {
-          shortages.push({ itemId: item.id, role: "PATH", needed: remaining });
-        } else {
-          await prisma.bookingAssignment.createMany({
-            data: take.map((id) => ({ bookingId: booking.id, bookingItemId: item.id, staffId: id })),
-            skipDuplicates: true,
-          });
-          take.forEach((id) => created.push({ staffId: id, bookingItemId: item.id, role: "PATH" }));
+        for (const sid of j1Ordered) {
+          if (remaining <= 0) break;
+          if (!picks.includes(sid)) {
+            picks.push(sid);
+            remaining--;
+          }
         }
+      }
+
+      if (remaining > 0) {
+        for (const sid of j2Ordered) {
+          if (remaining <= 0) break;
+          if (!picks.includes(sid)) {
+            picks.push(sid);
+            remaining--;
+          }
+        }
+      }
+
+      if (picks.length) {
+        await prisma.bookingAssignment.createMany({
+          data: picks.map((staffId) => ({
+            bookingId: booking.id,
+            bookingItemId: item.id,
+            staffId,
+          })),
+          skipDuplicates: true,
+        });
+        picks.forEach((staffId) =>
+          created.push({ staffId, bookingItemId: item.id })
+        );
+      }
+
+      if (remaining > 0) {
+        shortages.push({ itemId: item.id, role: 'PATH', needed: remaining });
       }
     }
   }
 
-  return { created, shortages };
+  return { created, shortages, pickedJatha: chosenJatha };
 }

@@ -82,6 +82,8 @@ model ProgramType {
   minKirtanis     Int @default(0)
   peopleRequired  Int @default(1)
 
+  compWeight Int @default(1)
+
   bookingItems BookingItem[]
 }
 
