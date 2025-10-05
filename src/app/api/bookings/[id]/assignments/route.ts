@@ -4,10 +4,7 @@ import { prisma } from '@/lib/db';
 
 type Params = { id: string };
 
-export async function GET(
-  _req: NextRequest,
-  ctx: { params: Promise<Params> }
-) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<Params> }) {
   const { id } = await ctx.params;
 
   try {

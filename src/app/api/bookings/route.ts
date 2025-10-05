@@ -1,3 +1,4 @@
+// src/app/api/bookings/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { CreateBookingSchema } from '@/lib/validation';
@@ -23,6 +24,7 @@ import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
+/** Helpers */
 function toLocalParts(input: Date | string | number) {
   const d = input instanceof Date ? input : new Date(input);
   const date = d.toLocaleDateString(undefined, {
@@ -36,6 +38,14 @@ function toLocalParts(input: Date | string | number) {
   });
   return { date, time };
 }
+
+// Hall helpers (priority & capacity inference)
+const HALL_PATTERNS = {
+  small: /(^|\b)(small\s*hall|hall\s*2)(\b|$)/i,
+  main: /(^|\b)(main\s*hall|hall\s*1)(\b|$)/i,
+  upper: /(^|\b)(upper\s*hall)(\b|$)/i,
+};
+const CAP_DEFAULTS = { small: 125, main: 325, upper: 100 };
 
 type CreatedBooking = {
   id: string;
@@ -55,6 +65,7 @@ type CreatedBooking = {
 
 export async function POST(req: Request) {
   try {
+    // session (best-effort)
     let session: any | null = null;
     try {
       session = await auth();
@@ -62,13 +73,15 @@ export async function POST(req: Request) {
       session = null;
     }
 
+    // validate
     const body = await req.json();
     const parsed = CreateBookingSchema.safeParse(body);
-    if (!parsed.success)
+    if (!parsed.success) {
       return NextResponse.json(
         { error: 'Invalid payload', details: parsed.error.flatten() },
         { status: 400 }
       );
+    }
     const input = parsed.data;
 
     if (input.locationType === 'OUTSIDE_GURDWARA' && !input.address?.trim()) {
@@ -92,12 +105,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reason }, { status: 400 });
     }
 
+    // program types
     const ptIds = (input.items || []).map((i: any) => i.programTypeId);
-    if (!ptIds.length)
+    if (!ptIds.length) {
       return NextResponse.json(
         { error: 'At least one program must be selected.' },
         { status: 400 }
       );
+    }
     const programs = await prisma.programType.findMany({
       where: { id: { in: ptIds } },
       select: {
@@ -106,13 +121,16 @@ export async function POST(req: Request) {
         minKirtanis: true,
         canBeOutsideGurdwara: true,
         requiresHall: true,
+        // If reqFromProgram uses peopleRequired, include it here:
+        peopleRequired: true,
       },
     });
-    if (programs.length !== ptIds.length)
+    if (programs.length !== ptIds.length) {
       return NextResponse.json(
         { error: 'Invalid program types' },
         { status: 400 }
       );
+    }
 
     if (
       input.locationType === 'OUTSIDE_GURDWARA' &&
@@ -124,50 +142,84 @@ export async function POST(req: Request) {
       );
     }
 
+    // role vector required by these programs
     const required: RoleVector = programs.reduce(
-      (acc, p) => add(acc, reqFromProgram(p)),
+      (acc, p) => add(acc, reqFromProgram(p as any)),
       { PATH: 0, KIRTAN: 0 }
     );
 
-    if (input.locationType === 'GURDWARA') {
-      const HALL_CAP = 2;
-      const concurrentHalls = await prisma.booking.count({
-        where: {
-          locationType: 'GURDWARA',
-          start: { lt: end },
-          end: { gt: start },
-        },
-      });
-      if (concurrentHalls >= HALL_CAP)
-        return NextResponse.json(
-          { error: 'Both halls are occupied at that time.' },
-          { status: 409 }
-        );
-    }
-
+    // ————— Per-hall selection (Small → Main → Upper) —————
     let hallId: string | null = null;
+
     if (input.locationType === 'GURDWARA') {
-      const halls = await prisma.hall.findMany({ where: { isActive: true } });
+      const halls = await prisma.hall.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, capacity: true },
+        orderBy: { name: 'asc' },
+      });
+
+      const small =
+        halls.find((h) => HALL_PATTERNS.small.test(h.name)) ??
+        halls.find((h) => (h.capacity ?? 0) > 100 && (h.capacity ?? 0) <= 125);
+      const main =
+        halls.find((h) => HALL_PATTERNS.main.test(h.name)) ??
+        halls.find((h) => (h.capacity ?? 0) > 125);
+      const upper =
+        halls.find((h) => HALL_PATTERNS.upper.test(h.name)) ??
+        halls.find((h) => (h.capacity ?? 0) > 0 && (h.capacity ?? 0) <= 100);
+
+      const ordered = [small, main, upper].filter(Boolean) as {
+        id: string;
+        name: string;
+        capacity: number | null;
+      }[];
+
       const attendees =
         typeof input.attendees === 'number' ? Math.max(1, input.attendees) : 1;
-      const smallHall =
-        halls.find((h: any) => h.capacity && h.capacity <= 125) ||
-        halls.find((h) => /small/i.test(h.name));
-      const mainHall =
-        halls.find((h: any) => h.capacity && h.capacity > 125) ||
-        halls.find((h) => /main/i.test(h.name));
-      const pick =
-        attendees < 125
-          ? (smallHall ?? mainHall ?? null)
-          : (mainHall ?? smallHall ?? null);
-      if (!pick)
+
+      const capOf = (h: { name: string; capacity: number | null }) => {
+        if (typeof h.capacity === 'number' && h.capacity != null)
+          return h.capacity;
+        if (HALL_PATTERNS.small.test(h.name)) return CAP_DEFAULTS.small;
+        if (HALL_PATTERNS.main.test(h.name)) return CAP_DEFAULTS.main;
+        if (HALL_PATTERNS.upper.test(h.name)) return CAP_DEFAULTS.upper;
+        return Number.MAX_SAFE_INTEGER; // fallback if unknown
+      };
+
+      const fits = (h: { name: string; capacity: number | null }) =>
+        capOf(h) >= attendees;
+
+      // pick first hall in priority order that (a) fits capacity and (b) has no overlap
+      for (const hall of ordered) {
+        if (!fits(hall)) continue;
+
+        const clash = await prisma.booking.count({
+          where: {
+            locationType: 'GURDWARA',
+            hallId: hall.id,
+            start: { lt: end },
+            end: { gt: start },
+          },
+        });
+
+        if (clash === 0) {
+          hallId = hall.id;
+          break;
+        }
+      }
+
+      if (!hallId) {
         return NextResponse.json(
-          { error: 'No suitable hall is available for the attendee count.' },
+          {
+            error:
+              'No suitable hall (Small → Main → Upper) is free at that time for the attendee count.',
+          },
           { status: 409 }
         );
-      hallId = pick.id;
+      }
     }
 
+    // Outside buffer (travel) for capacity math
     const candStart =
       input.locationType === 'OUTSIDE_GURDWARA'
         ? new Date(start.getTime() - OUTSIDE_BUFFER_MS)
@@ -180,19 +232,28 @@ export async function POST(req: Request) {
     const hours = hourSpan(candStart, candEnd).filter((h) =>
       BUSINESS_HOURS_24.includes(h)
     );
-    if (!hours.length)
+    if (!hours.length) {
       return NextResponse.json(
         { error: 'Selected time is outside business hours.' },
         { status: 400 }
       );
+    }
 
+    // ————— Transaction: capacity compute + create —————
     const created: CreatedBooking = await prisma.$transaction(async (tx) => {
+      // Build used-per-hour per location from overlaps (with outside buffer)
       const overlaps = await tx.booking.findMany({
         where: { start: { lte: candEnd }, end: { gte: candStart } },
         include: {
           items: {
             include: {
-              programType: { select: { minPathers: true, minKirtanis: true } },
+              programType: {
+                select: {
+                  minPathers: true,
+                  minKirtanis: true,
+                  peopleRequired: true,
+                },
+              },
             },
           },
         },
@@ -234,9 +295,11 @@ export async function POST(req: Request) {
         }
       }
 
-      const totalPool = await getTotalPoolPerRole();
+      // Pools & per-location limits
+      const totalPool = await getTotalPoolPerRole(); // total active staff by role
       const locMax = getMaxPerLocationPerRole(input.locationType);
 
+      // Ensure capacity exists each hour
       for (const h of hours) {
         for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
           const total = totalPool[r] ?? 0;
@@ -248,11 +311,15 @@ export async function POST(req: Request) {
             input.locationType === 'GURDWARA'
               ? (usedGW[h][r] ?? 0)
               : (usedOUT[h][r] ?? 0);
+
+          // Can't exceed the staff not already used in the opposite location
           const sharedLimit = Math.max(0, total - usedOpp);
+          // And also obey per-location cap
           const locLimit = Math.min(
             sharedLimit,
             locMax[r] ?? Number.MAX_SAFE_INTEGER
           );
+
           const remaining = Math.max(0, locLimit - usedHere);
           const need = (required[r] ?? 0) as number;
           if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
@@ -324,6 +391,7 @@ export async function POST(req: Request) {
       }
     }
 
+    // notifications
     const { date: startDate, time: startTime } = toLocalParts(created.start);
     const { time: endTime } = toLocalParts(created.end);
 
@@ -385,7 +453,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ id: created.id }, { status: 201 });
   } catch (e: any) {
-    if (String(e?.message) === 'CAPACITY_EXCEEDED')
+    if (String(e?.message) === 'CAPACITY_EXCEEDED') {
       return NextResponse.json(
         {
           error:
@@ -393,6 +461,7 @@ export async function POST(req: Request) {
         },
         { status: 409 }
       );
+    }
     console.error('Booking create error', e);
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
   }
