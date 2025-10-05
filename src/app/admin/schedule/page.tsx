@@ -28,7 +28,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   }
   const params = await searchParams;
 
-  const week = typeof params?.week === "string" ? parseISO(searchParams!.week) : new Date();
+  const week = typeof params?.week === "string" ? parseISO(params.week) : new Date();
   const ws = isValid(week) ? startOfWeek(week, { weekStartsOn: 1 }) : startOfWeek(new Date(), { weekStartsOn: 1 });
   const we = endOfWeek(ws, { weekStartsOn: 1 });
 
