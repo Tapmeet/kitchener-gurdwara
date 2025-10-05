@@ -1,8 +1,8 @@
+// src/components/BookingForm.tsx
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
-import { useRouter } from 'next/navigation';
 import { formatPhoneLive, toE164Generic } from '@/lib/phone';
 
 /* ---------- types ---------- */
@@ -14,12 +14,6 @@ interface ProgramType {
   name: string;
   category: ProgramCategory;
   durationMinutes: number;
-}
-
-interface Hall {
-  id: string;
-  name: string;
-  capacity?: number | null;
 }
 
 /** Union of fields we show errors under */
@@ -125,9 +119,7 @@ function visibleStartHours(
 /* ---------- component ---------- */
 
 export default function BookingForm() {
-  const router = useRouter();
   const [programTypes, setProgramTypes] = useState<ProgramType[]>([]);
-  const [halls, setHalls] = useState<Hall[]>([]);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const [success, setSuccess] = useState<string | null>(null);
@@ -163,39 +155,6 @@ export default function BookingForm() {
   // Available start hours
   const [availableHours, setAvailableHours] = useState<number[]>([]);
 
-  // Auto-assign hall
-  const autoHall: Hall | undefined = useMemo(() => {
-    if (locationType !== 'GURDWARA') return undefined;
-    if (!halls.length) return undefined;
-
-    const small =
-      halls.find((h) => /small/i.test(h.name)) ??
-      halls.find(
-        (h) =>
-          typeof h.capacity === 'number' &&
-          h.capacity > 100 &&
-          h.capacity <= 125
-      );
-
-    const main =
-      halls.find((h) => /main/i.test(h.name)) ??
-      halls.find((h) => typeof h.capacity === 'number' && h.capacity > 125);
-
-    const upper =
-      halls.find((h) => /upper/i.test(h.name)) ??
-      halls.find((h) => typeof h.capacity === 'number' && h.capacity <= 100);
-
-    const ordered = [small, main, upper].filter(Boolean) as Hall[];
-
-    const a = Number(attendees) || 0;
-    const fits = (h: Hall) =>
-      typeof h.capacity === 'number' && h.capacity != null
-        ? h.capacity >= a
-        : true;
-
-    return ordered.find(fits) ?? ordered[0];
-  }, [halls, locationType, attendees]);
-
   // End-time preview
   const endPreview = useMemo(() => {
     const addHrs = Math.ceil((durationMinutes || 0) / 60);
@@ -204,7 +163,6 @@ export default function BookingForm() {
   }, [startHour24, durationMinutes]);
 
   const selectedProgramKey = selectedProgramId || '';
-  const hallId = autoHall?.id ?? null;
 
   // Load reference data
   useEffect(() => {
@@ -212,13 +170,9 @@ export default function BookingForm() {
       .then((r) => r.json())
       .then(setProgramTypes)
       .catch(() => {});
-    fetch('/api/halls')
-      .then((r) => r.json())
-      .then(setHalls)
-      .catch(() => {});
   }, []);
 
-  // Fetch availability
+  // Fetch availability (hall is backend concern; we just pass attendees + location)
   useEffect(() => {
     if (!selectedProgramKey || !locationType) {
       setAvailableHours([]);
@@ -231,9 +185,6 @@ export default function BookingForm() {
       locationType,
     });
     if (attendees) params.set('attendees', attendees);
-    if (locationType === 'GURDWARA' && hallId) {
-      params.set('hallId', hallId as string);
-    }
 
     const url = `/api/availability?${params.toString()}`;
     let aborted = false;
@@ -252,7 +203,7 @@ export default function BookingForm() {
     return () => {
       aborted = true;
     };
-  }, [date, selectedProgramKey, locationType, attendees, hallId]);
+  }, [date, selectedProgramKey, locationType, attendees]);
 
   // Keep selected start hour valid
   useEffect(() => {
@@ -265,7 +216,7 @@ export default function BookingForm() {
     }
   }, [availableHours, date, startHour24]);
 
-  /* ---- Specific refs per field (typed to their actual elements) ---- */
+  /* ---- Specific refs per field ---- */
   const titleRef = useRef<HTMLInputElement | null>(null);
   const locationTypeRef = useRef<HTMLSelectElement | null>(null);
   const attendeesRef = useRef<HTMLInputElement | null>(null);
@@ -282,7 +233,6 @@ export default function BookingForm() {
     successTimerRef.current = window.setTimeout(() => setSuccess(null), ms);
   }
 
-  // clear timer on unmount
   useEffect(() => {
     return () => {
       if (successTimerRef.current) window.clearTimeout(successTimerRef.current);
@@ -312,14 +262,6 @@ export default function BookingForm() {
           ? (document.querySelector('[name="address"]') as HTMLElement | null)
           : null;
       }
-      case 'hallId': {
-        // read-only summary input; just scroll to it
-        return typeof document !== 'undefined'
-          ? (document.querySelector(
-              '[aria-describedby="err-hallId"]'
-            ) as HTMLElement | null)
-          : null;
-      }
       default:
         return null;
     }
@@ -336,7 +278,6 @@ export default function BookingForm() {
       'contactName',
       'contactPhone',
       'address',
-      'hallId',
       'form',
     ];
     const first = order.find((k) => keys[k]);
@@ -365,7 +306,7 @@ export default function BookingForm() {
     setSelectedProgramId('');
     setAvailableHours([]);
     setAttendees('');
-    if (form) form.reset(); // clears uncontrolled inputs like title/notes
+    if (form) form.reset();
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -387,10 +328,6 @@ export default function BookingForm() {
       | '';
     if (!loc) {
       nextErrors.locationType = FRIENDLY.locationType;
-    }
-    if (loc === 'GURDWARA' && !autoHall?.id) {
-      nextErrors.hallId =
-        'No hall fits this many people. Reduce the number or choose Outside Gurdwara.';
     }
     if (loc === 'OUTSIDE_GURDWARA' && !String(fd.get('address') || '').trim()) {
       nextErrors.address = FRIENDLY.address;
@@ -429,7 +366,7 @@ export default function BookingForm() {
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      hallId: loc === 'GURDWARA' ? (autoHall?.id ?? null) : null,
+      // hallId is not sent; server chooses automatically
       address:
         loc === 'OUTSIDE_GURDWARA'
           ? String(fd.get('address') || '').trim() || null
@@ -498,8 +435,7 @@ export default function BookingForm() {
 
     // Success
     setErrors({});
-
-    resetAll(form); // clear fields first
+    resetAll(form);
     flashSuccess('✅ Path/Kirtan Booking created successfully!');
   }
 
@@ -628,31 +564,6 @@ export default function BookingForm() {
                 )}
               </div>
 
-              {locationType === 'GURDWARA' && (
-                <div className='md:col-span-2'>
-                  <label className='label'>Hall (auto-assigned)</label>
-                  <input
-                    className={`input bg-gray-100 ${
-                      errors.hallId ? invalidCls : ''
-                    }`}
-                    value={autoHall ? autoHall.name : 'Choosing…'}
-                    readOnly
-                    aria-invalid={!!errors.hallId}
-                    aria-describedby={errors.hallId ? 'err-hallId' : undefined}
-                  />
-                  {errors.hallId && (
-                    <p id='err-hallId' className='text-xs text-red-600 mt-1'>
-                      {errors.hallId}
-                    </p>
-                  )}
-                  <p className='text-xs text-gray-500 mt-1'>
-                    Preference: <strong>Small → Main → Upper</strong>. Upper
-                    Hall capacity is <strong>100</strong>. We’ll auto-pick the
-                    first that fits {attendees || 0} attendees.
-                  </p>
-                </div>
-              )}
-
               {locationType === 'OUTSIDE_GURDWARA' && (
                 <div className='md:col-span-2'>
                   <label className='label'>Address</label>
@@ -679,9 +590,7 @@ export default function BookingForm() {
                 return (
                   <label
                     key={pt.id}
-                    className={`flex items-center gap-2 rounded-xl border p-3 hover:bg-black/5 ${
-                      radioErr ? 'border-red-500' : 'border-black/10'
-                    }`}
+                    className={`flex items-center gap-2 rounded-xl border p-3 hover:bg-black/5 ${radioErr ? 'border-red-500' : 'border-black/10'}`}
                   >
                     <input
                       type='radio'
@@ -919,9 +828,7 @@ export default function BookingForm() {
             </div>
             <div className='flex items-end mb-2'>
               <button
-                className={`btn btn-primary w-full ${
-                  submitting ? 'opacity-70' : ''
-                }`}
+                className={`btn btn-primary w-full ${submitting ? 'opacity-70' : ''}`}
                 disabled={submitting}
                 type='submit'
               >
