@@ -578,7 +578,7 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Program (SINGLE) */}
+          {/* Program */}
           <div>
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Program
