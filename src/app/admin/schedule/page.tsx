@@ -21,19 +21,20 @@ function locLine(b: { locationType: "GURDWARA" | "OUTSIDE_GURDWARA"; hall?: { na
   return b.address ? `Outside — ${b.address}` : "Outside";
 }
 
-export default async function Page({ searchParams }: { searchParams?: Record<string, string | string[] | undefined> }) {
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const session = await auth();
   if (!session?.user || !isAdminRole((session.user as any).role)) {
     return <div className="p-6">Unauthorized (admin/secretary only).</div>;
   }
+  const params = await searchParams;
 
-  const week = typeof searchParams?.week === "string" ? parseISO(searchParams!.week) : new Date();
+  const week = typeof params?.week === "string" ? parseISO(searchParams!.week) : new Date();
   const ws = isValid(week) ? startOfWeek(week, { weekStartsOn: 1 }) : startOfWeek(new Date(), { weekStartsOn: 1 });
   const we = endOfWeek(ws, { weekStartsOn: 1 });
 
-  const role = (typeof searchParams?.role === "string" ? searchParams?.role : "") as Role | "";
-  const jatha = (typeof searchParams?.jatha === "string" ? searchParams?.jatha : "") as Jatha | "";
-  const q = (typeof searchParams?.q === "string" ? searchParams?.q : "").trim().toLowerCase();
+  const role = (typeof params?.role === "string" ? params?.role : "") as Role | "";
+  const jatha = (typeof params?.jatha === "string" ? params?.jatha : "") as Jatha | "";
+  const q = (typeof params?.q === "string" ? params?.q : "").trim().toLowerCase();
 
   // Load active staff (optionally filter by jatha / name)
   const staff = await prisma.staff.findMany({

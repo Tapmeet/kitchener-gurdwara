@@ -12,14 +12,15 @@ function isAdminRole(role?: string | null) {
   return role === "ADMIN" || role === "SECRETARY";
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const session = await auth();
   if (!session?.user || !isAdminRole((session.user as any).role)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
   const staff = await prisma.staff.findUnique({
-    where: { id: params.id },
+    where: { id: id },
     select: { id: true, name: true },
   });
   if (!staff) return new NextResponse("Not found", { status: 404 });
