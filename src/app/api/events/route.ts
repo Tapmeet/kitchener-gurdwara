@@ -7,7 +7,7 @@ import { authOptions } from '@/auth';
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role;
-  const isAdmin = role === 'ADMIN' || role === 'SECRETARY';
+  const isAdmin = role === "ADMIN";
 
   const { searchParams } = new URL(req.url);
   const fromStr = searchParams.get('from');

@@ -127,11 +127,11 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: 'secretary@example.org' },
-    update: { role: 'SECRETARY' },
+    update: { role: 'ADMIN' },
     create: {
       email: 'secretary@example.org',
       name: 'Local Secretary',
-      role: 'SECRETARY',
+      role: 'ADMIN',
       passwordHash: await bcrypt.hash('secret123', 10),
     },
   });

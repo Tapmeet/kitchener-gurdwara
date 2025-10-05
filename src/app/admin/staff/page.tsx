@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import Link from 'next/link';
 
 function isPriv(role?: string | null) {
-  return role === 'ADMIN' || role === 'SECRETARY';
+  return role === "ADMIN";
 }
 
 export default async function Page() {

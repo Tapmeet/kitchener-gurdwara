@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { buildFairnessReport, type Role, type Jatha } from "@/lib/report-fairness";
 
 function isAdminRole(role?: string | null) {
-  return role === "ADMIN" || role === "SECRETARY";
+  return role === "ADMIN";
 }
 
 export async function GET(req: Request) {

@@ -12,7 +12,7 @@ export async function GET(
 
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role;
-  const isAdmin = role === 'ADMIN' || role === 'SECRETARY';
+  const isAdmin = role === "ADMIN";
   if (!isAdmin)
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });

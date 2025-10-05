@@ -1,5 +1,5 @@
 // src/config/nav.ts
-export type AppRole = "ADMIN" | "SECRETARY" | "GRANTHI" | "LANGRI" | "VIEWER";
+export type AppRole = "ADMIN" | "ADMIN" | "STAFF" | "LANGRI" | "VIEWER";
 
 export type NavItem = {
   label: string;
@@ -20,7 +20,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "My Assignments (.ics)", href: "/api/me/assignments.ics" },
 
   // Admin-only
-  { label: "Admin · Schedule", href: "/admin/schedule", roles: ["ADMIN", "SECRETARY"] },
-  { label: "Admin · Staff", href: "/admin/staff", roles: ["ADMIN", "SECRETARY"] },
-  { label: "Admin · Swap Assignments", href: "/admin/assignments/swap", roles: ["ADMIN", "SECRETARY"] },
+  { label: "Admin · Schedule", href: "/admin/schedule", roles: ["ADMIN"] },
+  { label: "Admin · Staff", href: "/admin/staff", roles: ["ADMIN"] },
+  { label: "Admin · Swap Assignments", href: "/admin/assignments/swap", roles: ["ADMIN"] },
 ];

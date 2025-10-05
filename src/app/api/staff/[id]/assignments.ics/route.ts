@@ -9,7 +9,7 @@ function icsEscape(s: string) {
 }
 
 function isAdminRole(role?: string | null) {
-  return role === "ADMIN" || role === "SECRETARY";
+  return role === "ADMIN";
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {

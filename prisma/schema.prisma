@@ -10,8 +10,7 @@ datasource db {
 
 enum UserRole {
   ADMIN
-  SECRETARY
-  GRANTHI
+  STAFF
   LANGRI
   VIEWER
 }

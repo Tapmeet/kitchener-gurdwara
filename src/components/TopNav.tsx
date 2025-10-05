@@ -43,7 +43,7 @@ export default async function TopNav() {
    It conditionally shows Admin Schedule if user is admin/secretary. */
 export async function AdminNavExtra() {
   const session = await auth();
-  const isAdmin = session?.user && ((session.user as any).role === "ADMIN" || (session.user as any).role === "SECRETARY");
+  const isAdmin = session?.user && ((session.user as any).role === "ADMIN" || (session.user as any).role === "ADMIN");
   if (!isAdmin) return null;
   return (
     <nav className="w-full border-t bg-white/60">

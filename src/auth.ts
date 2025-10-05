@@ -9,8 +9,8 @@ import bcrypt from 'bcrypt';
 
 export type AllowedRole =
   | 'ADMIN'
-  | 'SECRETARY'
-  | 'GRANTHI'
+  | "ADMIN"
+  | "STAFF"
   | 'LANGRI'
   | 'VIEWER';
 

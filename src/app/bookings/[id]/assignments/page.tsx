@@ -4,7 +4,7 @@ import { authOptions } from '@/auth';
 import { redirect } from 'next/navigation';
 import AssignmentsPanel from '@/components/AssignmentsPanel';
 
-const ALLOWED = new Set(['ADMIN', 'SECRETARY', 'GRANTHI', 'LANGRI']);
+const ALLOWED = new Set(['ADMIN', "ADMIN", "STAFF", 'LANGRI']);
 
 export default async function BookingAssignmentsPage({
   params,

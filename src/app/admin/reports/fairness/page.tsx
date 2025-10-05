@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import Link from "next/link";
 
 function isAdminRole(role?: string | null) {
-  return role === "ADMIN" || role === "SECRETARY";
+  return role === "ADMIN";
 }
 
 export const dynamic = "force-dynamic";

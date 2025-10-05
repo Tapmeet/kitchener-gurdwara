@@ -13,7 +13,7 @@ function fmt(d: Date) {
 }
 
 function isAdminRole(role?: string | null) {
-  return role === "ADMIN" || role === "SECRETARY";
+  return role === "ADMIN";
 }
 
 function locLine(b: { locationType: "GURDWARA" | "OUTSIDE_GURDWARA"; hall?: { name: string } | null; address?: string | null; }) {

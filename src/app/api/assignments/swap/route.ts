@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
 function isPriv(role?: string | null) {
-  return role === "ADMIN" || role === "SECRETARY";
+  return role === "ADMIN";
 }
 
 // POST body: { a: string, b: string }

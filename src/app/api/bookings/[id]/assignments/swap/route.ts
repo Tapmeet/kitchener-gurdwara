@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
 import { prisma } from '@/lib/db';
 
-const ALLOWED = new Set(['ADMIN', 'SECRETARY']);
+const ALLOWED = new Set(['ADMIN', "ADMIN"]);
 
 export async function POST(
   req: NextRequest,

@@ -1,7 +1,7 @@
 // src/types/next-auth.d.ts
 import type { DefaultSession, DefaultUser } from 'next-auth';
 
-type Role = 'ADMIN' | 'SECRETARY' | 'GRANTHI' | 'LANGRI' | 'VIEWER';
+type Role = 'ADMIN' | "ADMIN" | "STAFF" | 'LANGRI' | 'VIEWER';
 
 declare module 'next-auth' {
   interface User extends DefaultUser {

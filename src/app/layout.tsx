@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 export async function AdminSubnav() {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role ?? null;
-  const isAdmin = role === "ADMIN" || role === "SECRETARY";
+  const isAdmin = role === "ADMIN";
   if (!isAdmin) return null;
   return (
     <nav className="w-full bg-white/70 backdrop-blur border-b">
@@ -33,7 +33,7 @@ export async function AdminSubnav() {
 
 function computePrivileged(session: any): boolean {
   const role = (session?.user as any)?.role;
-  if (role === 'ADMIN' || role === 'SECRETARY') return true;
+  if (role === "ADMIN") return true;
   // optional fallback: env-based email allowlist
   const email = session?.user?.email?.toLowerCase() ?? '';
   const admins = (process.env.ADMIN_EMAILS ?? '')
