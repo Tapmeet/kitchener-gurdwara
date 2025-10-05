@@ -6,6 +6,7 @@ import {
   ProgramCategory,
   StaffSkill,
   Jatha,
+  UserRole,
 } from '@prisma/client';
 const prisma = new PrismaClient();
 
@@ -93,7 +94,26 @@ async function upsertStaff(
   });
 }
 
+async function upsertUser(
+  email: string,
+  name: string,
+  role: UserRole,
+  passwordPlain: string
+) {
+  await prisma.user.upsert({
+    where: { email },
+    update: { name, role },
+    create: {
+      email,
+      name,
+      role,
+      passwordHash: await bcrypt.hash(passwordPlain, 10),
+    },
+  });
+}
+
 async function main() {
+  // existing admin + secretary (keep these)
   await prisma.user.upsert({
     where: { email: 'admin@example.org' },
     update: { role: 'ADMIN' },
@@ -115,6 +135,53 @@ async function main() {
       passwordHash: await bcrypt.hash('secret123', 10),
     },
   });
+
+  // NEW: staff login accounts
+  await upsertUser(
+    'granthi@example.com',
+    'Granthi',
+    UserRole.GRANTHI,
+    'granthi123'
+  );
+
+  await upsertUser(
+    'sevadar1@example.com',
+    'Sevadar A1',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+  await upsertUser(
+    'sevadar2@example.com',
+    'Sevadar A2',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+  await upsertUser(
+    'sevadar3@example.com',
+    'Sevadar A3',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+
+  await upsertUser(
+    'sevadar4@example.com',
+    'Sevadar B1',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+  await upsertUser(
+    'sevadar5@example.com',
+    'Sevadar B2',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+  await upsertUser(
+    'sevadar6@example.com',
+    'Sevadar B3',
+    UserRole.LANGRI,
+    'sevadar123'
+  );
+
   await upsertHall('Small Hall', 125);
   await upsertHall('Main Hall', 350);
   await upsertHall('Upper Hall', 100);
@@ -148,6 +215,13 @@ async function main() {
     email: 'sevadar6@example.com',
   });
 
+  await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
+    durationMinutes: 120,
+    peopleRequired: 3,
+    minPathers: 1,
+    minKirtanis: 1,
+    compWeight: 3,
+  });
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
     durationMinutes: 90,
     peopleRequired: 1,
@@ -155,26 +229,28 @@ async function main() {
     minKirtanis: 0,
     compWeight: 2,
   });
-  await upsertProgram('Sukhmani Sahib Path With Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 120,
-    peopleRequired: 3,
+  await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
+    durationMinutes: 180,
+    peopleRequired: 4,
     minPathers: 1,
     minKirtanis: 1,
-    compWeight: 3,
+    requiresHall: true,
+    canBeOutsideGurdwara: false,
+    compWeight: 4,
   });
-  await upsertProgram('Akhand Path', ProgramCategory.PATH, {
-    durationMinutes: 48 * 60,
-    peopleRequired: 4,
-    minPathers: 4,
-    minKirtanis: 0,
-    compWeight: 5,
-  });
-  await upsertProgram('Akhand Path with Kirtan', ProgramCategory.PATH, {
+  await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60,
     peopleRequired: 4,
     minPathers: 4,
     minKirtanis: 1,
     compWeight: 6,
+  });
+  await upsertProgram('Antim Ardas', ProgramCategory.PATH, {
+    durationMinutes: 120,
+    peopleRequired: 3,
+    minPathers: 1,
+    minKirtanis: 1,
+    compWeight: 3,
   });
   await upsertProgram('Assa Di War', ProgramCategory.KIRTAN, {
     durationMinutes: 180,
@@ -190,14 +266,12 @@ async function main() {
     minKirtanis: 3,
     compWeight: 1,
   });
-  await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
-    durationMinutes: 180,
+  await upsertProgram('Akhand Path', ProgramCategory.PATH, {
+    durationMinutes: 48 * 60,
     peopleRequired: 4,
-    minPathers: 1,
-    minKirtanis: 1,
-    requiresHall: true,
-    canBeOutsideGurdwara: false,
-    compWeight: 4,
+    minPathers: 4,
+    minKirtanis: 0,
+    compWeight: 5,
   });
 
   console.log('✅ Seed completed');
