@@ -8,6 +8,7 @@ import {
   Jatha,
   UserRole,
 } from '@prisma/client';
+
 const prisma = new PrismaClient();
 
 async function upsertHall(name: string, capacity: number | null) {
@@ -113,79 +114,81 @@ async function upsertUser(
 }
 
 async function main() {
-  // existing admin + secretary (keep these)
+  // Admin + Secretary => ADMIN (use enum, not string)
   await prisma.user.upsert({
     where: { email: 'admin@example.org' },
-    update: { role: 'ADMIN' },
+    update: { role: UserRole.ADMIN },
     create: {
       email: 'admin@example.org',
       name: 'Local Admin',
-      role: 'ADMIN',
+      role: UserRole.ADMIN,
       passwordHash: await bcrypt.hash('admin123', 10),
     },
   });
 
   await prisma.user.upsert({
     where: { email: 'secretary@example.org' },
-    update: { role: 'ADMIN' },
+    update: { role: UserRole.ADMIN },
     create: {
       email: 'secretary@example.org',
       name: 'Local Secretary',
-      role: 'ADMIN',
+      role: UserRole.ADMIN,
       passwordHash: await bcrypt.hash('secret123', 10),
     },
   });
 
-  // NEW: staff login accounts
+  // Staff login accounts (Granthi + Sevadars) => STAFF
   await upsertUser(
     'granthi@example.com',
     'Granthi',
-    UserRole.GRANTHI,
+    UserRole.STAFF,
     'granthi123'
   );
 
   await upsertUser(
     'sevadar1@example.com',
     'Sevadar A1',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
   await upsertUser(
     'sevadar2@example.com',
     'Sevadar A2',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
   await upsertUser(
     'sevadar3@example.com',
     'Sevadar A3',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
 
   await upsertUser(
     'sevadar4@example.com',
     'Sevadar B1',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
   await upsertUser(
     'sevadar5@example.com',
     'Sevadar B2',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
   await upsertUser(
     'sevadar6@example.com',
     'Sevadar B3',
-    UserRole.LANGRI,
+    UserRole.STAFF,
     'sevadar123'
   );
 
+  // Halls
   await upsertHall('Small Hall', 125);
   await upsertHall('Main Hall', 350);
   await upsertHall('Upper Hall', 100);
 
+  // Staff (skills + optional jatha/emails)
   await upsertStaff('Granthi', [StaffSkill.PATH], {
     email: 'granthi@example.com',
     phone: '+11234567890',
@@ -215,6 +218,7 @@ async function main() {
     email: 'sevadar6@example.com',
   });
 
+  // Programs (restore Anand Karaj → OTHER)
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 120,
     peopleRequired: 3,

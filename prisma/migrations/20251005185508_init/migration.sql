@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "public"."UserRole" AS ENUM ('ADMIN', 'SECRETARY', 'GRANTHI', 'LANGRI', 'VIEWER');
+CREATE TYPE "public"."UserRole" AS ENUM ('ADMIN', 'STAFF', 'LANGRI', 'VIEWER');
 
 -- CreateEnum
 CREATE TYPE "public"."LocationType" AS ENUM ('GURDWARA', 'OUTSIDE_GURDWARA');
