@@ -112,12 +112,6 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
           >
             <ActiveLink href='/'>Calendar</ActiveLink>
             <ActiveLink href='/book'>Book</ActiveLink>
-            {isAuthenticated && (
-              <ActiveLink href='/dashboard'>Dashboard</ActiveLink>
-            )}
-            {isAuthenticated && isPrivileged && (
-              <ActiveLink href='/admin'>Admin</ActiveLink>
-            )}
 
             {!isAuthenticated ? (
               <Link
