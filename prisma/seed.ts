@@ -34,22 +34,26 @@ async function upsertProgram(
 ) {
   const {
     durationMinutes,
-    peopleRequired,
-    minPathers,
-    minKirtanis,
     requiresHall = false,
     canBeOutsideGurdwara = true,
     compWeight = 1,
   } = opts;
 
-  // --- normalize min roles and peopleRequired ---
-  const _minP = Math.max(0, minPathers ?? 0);
-  const _minK = Math.max(0, minKirtanis ?? 0);
-  const _minSum = _minP + _minK;
-  const _people = Math.max(peopleRequired ?? 0, _minSum);
-  if ((peopleRequired ?? 0) < _minSum) {
+  // normalize
+  let minP = Math.max(0, opts.minPathers ?? 0);
+  let minK = Math.max(0, opts.minKirtanis ?? 0);
+
+  // hard rule: pure KIRTAN programs need 3 kirtanis and 0 pathers, people ≥ 3
+  if (category === ProgramCategory.KIRTAN) {
+    minP = 0;
+    minK = Math.max(3, minK);
+  }
+
+  const minSum = minP + minK;
+  const people = Math.max(opts.peopleRequired ?? 0, minSum);
+  if ((opts.peopleRequired ?? 0) < minSum) {
     console.warn(
-      `Adjusting peopleRequired for ${name}: ${peopleRequired} -> ${_people} to satisfy minPathers+minKirtanis=${_minSum}`
+      `Adjusting peopleRequired for ${name}: ${opts.peopleRequired} -> ${people} (mins=${minSum})`
     );
   }
 
@@ -58,9 +62,9 @@ async function upsertProgram(
     update: {
       category,
       durationMinutes,
-      peopleRequired,
-      minPathers,
-      minKirtanis,
+      peopleRequired: people, // use normalized
+      minPathers: minP, // use normalized
+      minKirtanis: minK, // use normalized
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
@@ -70,9 +74,9 @@ async function upsertProgram(
       name,
       category,
       durationMinutes,
-      peopleRequired,
-      minPathers,
-      minKirtanis,
+      peopleRequired: people, // use normalized
+      minPathers: minP, // use normalized
+      minKirtanis: minK, // use normalized
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
@@ -229,12 +233,12 @@ async function main() {
     email: 'sevadar6@example.com',
   });
 
-  // Programs (restore Anand Karaj → OTHER)
+  // Programs
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 120,
     peopleRequired: 3,
-    minPathers: 1,
-    minKirtanis: 1,
+    minPathers: 0,
+    minKirtanis: 3,
     compWeight: 3,
   });
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
@@ -248,7 +252,7 @@ async function main() {
     durationMinutes: 180,
     peopleRequired: 4,
     minPathers: 1,
-    minKirtanis: 1,
+    minKirtanis: 3,
     requiresHall: true,
     canBeOutsideGurdwara: false,
     compWeight: 4,
@@ -256,29 +260,29 @@ async function main() {
   await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60,
     peopleRequired: 4,
-    minPathers: 4,
-    minKirtanis: 1,
+    minPathers: 1,
+    minKirtanis: 3,
     compWeight: 6,
   });
   await upsertProgram('Antim Ardas', ProgramCategory.PATH, {
     durationMinutes: 120,
     peopleRequired: 3,
-    minPathers: 1,
-    minKirtanis: 1,
+    minPathers: 3,
+    minKirtanis: 0,
     compWeight: 3,
   });
   await upsertProgram('Alania Da Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 120,
     peopleRequired: 3,
-    minPathers: 1,
-    minKirtanis: 1,
+    minPathers: 0,
+    minKirtanis: 3,
     compWeight: 3,
   });
   await upsertProgram('Assa Di War', ProgramCategory.KIRTAN, {
     durationMinutes: 180,
-    peopleRequired: 4,
-    minPathers: 0,
-    minKirtanis: 3,
+    peopleRequired: 3,
+    minPathers: 3,
+    minKirtanis: 0,
     compWeight: 4,
   });
   await upsertProgram('Kirtan', ProgramCategory.KIRTAN, {
