@@ -64,6 +64,8 @@ model User {
    * /**
    * /**
    * /**
+   * /**
+   * /**
    * /** Bookings where this user is the customer/requester
    */
   customerBookings Booking[] @relation("CustomerBookings")
@@ -105,6 +107,11 @@ model ProgramType {
   peopleRequired  Int @default(1)
 
   compWeight Int @default(1)
+
+  // NEW: smart scheduling fields
+  trailingKirtanMinutes    Int @default(0) // if >0, last N minutes need a full jatha (3 kirtanis)
+  pathRotationMinutes      Int @default(0) // if >0, slice PATH work into N-minute shifts (e.g., 120)
+  pathClosingDoubleMinutes Int @default(0) // last N minutes need 2 pathis instead of 1
 
   bookingItems BookingItem[]
 }
@@ -188,6 +195,10 @@ model BookingAssignment {
   bookingId     String
   bookingItemId String
   staffId       String
+
+  // NEW: windowed assignment (if null => whole booking window)
+  start DateTime?
+  end   DateTime?
 
   booking     Booking     @relation("BookingAssignments", fields: [bookingId], references: [id], onDelete: Cascade)
   bookingItem BookingItem @relation("ItemAssignments", fields: [bookingItemId], references: [id], onDelete: Cascade)

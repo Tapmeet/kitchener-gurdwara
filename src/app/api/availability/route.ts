@@ -1,7 +1,7 @@
 // src/app/api/availability/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { LocationType } from '@prisma/client';
+import { LocationType, ProgramCategory } from '@prisma/client';
 import {
   BUSINESS_HOURS_24,
   allowedStartHoursFor,
@@ -12,9 +12,73 @@ import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 import { pickFirstFreeHall } from '@/lib/halls';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
+import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 
 // 15 min buffer (outside gurdwara only)
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+
+/** Build a map hour(24)->Set<staffId> that are busy in that hour, honoring outside buffer
+ * and per-assignment windows (start/end). Only counts PENDING/CONFIRMED. */
+async function buildBusyByHourForDay(dayStart: Date, dayEnd: Date) {
+  const busyByHour: Record<number, Set<string>> = {};
+  for (const h of BUSINESS_HOURS_24) busyByHour[h] = new Set();
+
+  const asns = await prisma.bookingAssignment.findMany({
+    where: {
+      booking: {
+        start: { lte: dayEnd },
+        end: { gte: dayStart },
+        status: { in: ['PENDING', 'CONFIRMED'] },
+      },
+    },
+    select: {
+      staffId: true,
+      start: true, // assignment window (may be null)
+      end: true, // assignment window (may be null)
+      booking: { select: { start: true, end: true, locationType: true } },
+    },
+  });
+
+  for (const a of asns) {
+    // prefer assignment window if present, else fall back to the booking window
+    const sRaw = a.start ?? a.booking.start;
+    const eRaw = a.end ?? a.booking.end;
+
+    const s = new Date(sRaw);
+    const e = new Date(eRaw);
+
+    const paddedStart =
+      a.booking.locationType === 'OUTSIDE_GURDWARA'
+        ? new Date(s.getTime() - OUTSIDE_BUFFER_MS)
+        : s;
+    const paddedEnd =
+      a.booking.locationType === 'OUTSIDE_GURDWARA'
+        ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
+        : e;
+
+    const hrs = hourSpan(paddedStart, paddedEnd).filter((h) =>
+      BUSINESS_HOURS_24.includes(h)
+    );
+    for (const h of hrs) busyByHour[h].add(a.staffId);
+  }
+
+  return busyByHour;
+}
+
+/** Count how many whole jathas (all members) are fully free in a given hour. */
+function countWholeFreeJathasAtHour(
+  busySet: Set<string>,
+  groups: Map<string, { id: string }[]>
+): number {
+  let free = 0;
+  for (const [_key, members] of groups) {
+    const ids = members.map((m) => m.id);
+    if (ids.length >= JATHA_SIZE && ids.every((id) => !busySet.has(id))) {
+      free += 1;
+    }
+  }
+  return free;
+}
 
 export async function GET(req: Request) {
   try {
@@ -43,7 +107,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // Load selected programs for staffing + duration
+    // Load selected programs for staffing + duration (+category for jatha rule)
     const programs = await prisma.programType.findMany({
       where: { id: { in: programTypeIds } },
       select: {
@@ -53,8 +117,11 @@ export async function GET(req: Request) {
         canBeOutsideGurdwara: true,
         requiresHall: true,
         peopleRequired: true,
+        category: true,
+        trailingKirtanMinutes: true, // NEW
       },
     });
+
     if (!programs.length) {
       return NextResponse.json(
         { error: 'Program types not found' },
@@ -93,15 +160,50 @@ export async function GET(req: Request) {
       )
       .reduce((a, b) => a + b, 0);
 
-    // Duration = longest program (run concurrently in one booking)
+    // How long is this block?
     const durationMinutes = Math.max(
       ...programs.map((p) => p.durationMinutes || 0)
     );
     const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
 
+    // For jatha logic
+    const trailingMax = Math.max(
+      ...programs.map((p) => p.trailingKirtanMinutes ?? 0)
+    );
+
+    // Programs that need a full jatha the whole way through (pure KIRTAN / minKirtanis>0)
+    const jathaAllThroughCount = programs.filter(
+      (p) => (p.minKirtanis ?? 0) > 0 || p.category === ProgramCategory.KIRTAN
+    ).length;
+
+    // Programs that need a jatha only at the end (trailing window)
+    const jathaAtEndCount = programs.filter(
+      (p) => (p.trailingKirtanMinutes ?? 0) > 0
+    ).length;
+
+    // Special handling for very long windows
+    const isLong = durationHours >= 36; // treat 36h+ as a long multi-day window
+    const isPurePath = required.KIRTAN === 0;
+    const isLongPath = isLong && isPurePath;
+
+    // Multi-day window with Kirtan embedded is not supported
+    if (isLong && !isPurePath) {
+      return NextResponse.json({
+        hours: [],
+        remainingByHour: {},
+        required,
+        availableByHour: {},
+        hallByHour: {},
+        error:
+          'Kirtan cannot be scheduled inside a multi-day window. Create a 48h Akhand Path booking, then a separate short Kirtan (“Samapti”) at the end.',
+      });
+    }
+
     // Candidate start hours
     const dayLocal = new Date(`${dateStr}T00:00:00`);
-    let candidates = allowedStartHoursFor(dayLocal, durationHours);
+    let candidates = isLong
+      ? [...BUSINESS_HOURS_24] // start any business-hour; end can cross days
+      : allowedStartHoursFor(dayLocal, durationHours);
 
     // Hide past hours if querying "today"
     const minHourToday = minSelectableHour24(dayLocal, new Date());
@@ -114,7 +216,7 @@ export async function GET(req: Request) {
       where: {
         start: { lte: dayEnd },
         end: { gte: dayStart },
-        status: { in: ['PENDING', 'CONFIRMED'] }, // only active holds affect availability
+        status: { in: ['PENDING', 'CONFIRMED'] },
       },
       include: {
         items: {
@@ -186,6 +288,10 @@ export async function GET(req: Request) {
       }
     }
 
+    // Busy-by-hour for whole-jatha checks + all jatha groups
+    const busyByHour = await buildBusyByHourForDay(dayStart, dayEnd);
+    const jathaGroups = await getJathaGroups(); // Map<'A'|'B', Staff[]>
+
     // Total pool & per-location caps
     const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
     const totalPool = await getTotalPoolPerRole(); // { PATH, KIRTAN }
@@ -229,48 +335,87 @@ export async function GET(req: Request) {
       };
       let ok = true;
 
-      for (const hh of spanHours) {
-        for (const r of ROLES) {
-          const total = totalPool[r] ?? 0;
-          const usedOpp =
-            locationType === 'GURDWARA'
-              ? (usedOUT[hh][r] ?? 0)
-              : (usedGW[hh][r] ?? 0);
-          const usedHere =
-            locationType === 'GURDWARA'
-              ? (usedGW[hh][r] ?? 0)
-              : (usedOUT[hh][r] ?? 0);
+      if (!isLongPath) {
+        // Role pool & per-location caps
+        for (const hh of spanHours) {
+          for (const r of ROLES) {
+            const total = totalPool[r] ?? 0;
+            const usedOpp =
+              locationType === 'GURDWARA'
+                ? (usedOUT[hh][r] ?? 0)
+                : (usedGW[hh][r] ?? 0);
+            const usedHere =
+              locationType === 'GURDWARA'
+                ? (usedGW[hh][r] ?? 0)
+                : (usedOUT[hh][r] ?? 0);
 
-          const sharedLimit = Math.max(0, total - usedOpp);
-          const locLimit = Math.min(
-            sharedLimit,
-            (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+            const sharedLimit = Math.max(0, total - usedOpp);
+            const locLimit = Math.min(
+              sharedLimit,
+              (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+            );
+
+            const remaining = Math.max(0, locLimit - usedHere);
+            minRem[r] = Math.min(minRem[r] as number, remaining);
+
+            if (remaining < (required[r] ?? 0)) ok = false;
+          }
+          if (!ok) break;
+
+          // Unique headcount guard (humans, not roles)
+          const usedOppHead =
+            locationType === 'GURDWARA' ? usedHeadOUT[hh] : usedHeadGW[hh];
+          const usedHereHead =
+            locationType === 'GURDWARA' ? usedHeadGW[hh] : usedHeadOUT[hh];
+          const remainingHead = Math.max(
+            0,
+            totalUniqueStaff - usedOppHead - usedHereHead
           );
-
-          const remaining = Math.max(0, locLimit - usedHere);
-          minRem[r] = Math.min(minRem[r] as number, remaining);
-
-          if (remaining < (required[r] ?? 0)) {
+          if (remainingHead < headcountRequired) {
             ok = false;
+            break;
           }
         }
-        if (!ok) break;
+      } else {
+        // Long path: we don’t enforce staff pool/headcount here.
+        minRem.PATH = 0;
+        minRem.KIRTAN = 0;
+      }
 
-        // Headcount guard (unique humans across roles)
-        const usedOppHead =
-          locationType === 'GURDWARA' ? usedHeadOUT[hh] : usedHeadGW[hh];
-        const usedHereHead =
-          locationType === 'GURDWARA' ? usedHeadGW[hh] : usedHeadOUT[hh];
-        const remainingHead = Math.max(
-          0,
-          totalUniqueStaff - usedOppHead - usedHereHead
-        );
-        if (remainingHead < headcountRequired) {
-          ok = false;
-          break;
+      // Whole-jatha guard (final, single place)
+      if (ok) {
+        if (jathaAllThroughCount > 0) {
+          // Need full jatha available for ALL hours in the span
+          for (const hh of spanHours) {
+            const freeJ = countWholeFreeJathasAtHour(
+              busyByHour[hh],
+              jathaGroups
+            );
+            if (freeJ < jathaAllThroughCount) {
+              ok = false;
+              break;
+            }
+          }
+        } else if (jathaAtEndCount > 0 && trailingMax > 0) {
+          // Need full jatha only in the trailing window
+          const tStart = new Date(candEnd.getTime() - trailingMax * 60_000);
+          const trailingHours = hourSpan(tStart, candEnd).filter((h) =>
+            BUSINESS_HOURS_24.includes(h)
+          );
+          for (const hh of trailingHours) {
+            const freeJ = countWholeFreeJathasAtHour(
+              busyByHour[hh],
+              jathaGroups
+            );
+            if (freeJ < jathaAtEndCount) {
+              ok = false;
+              break;
+            }
+          }
         }
       }
 
+      // ✅ PUSH the candidate if it passed all checks
       if (ok) {
         if (minRem.PATH === Number.MAX_SAFE_INTEGER) minRem.PATH = 0;
         if (minRem.KIRTAN === Number.MAX_SAFE_INTEGER) minRem.KIRTAN = 0;
@@ -300,10 +445,11 @@ export async function GET(req: Request) {
         slotStart.getTime() + durationMinutes * 60 * 1000
       );
 
-      // Staff feasibility (from earlier calc)
       const req = required;
       const rem = remainingByHour[hStart] ?? { PATH: 0, KIRTAN: 0 };
-      const hasStaff = rem.PATH >= req.PATH && rem.KIRTAN >= req.KIRTAN;
+      const hasStaff = isLongPath
+        ? true // don’t block on staffing for long path windows
+        : rem.PATH >= req.PATH && rem.KIRTAN >= req.KIRTAN;
 
       // Hall feasibility
       let hasHall = true;
@@ -311,7 +457,6 @@ export async function GET(req: Request) {
 
       if (needsHall) {
         if (hallId) {
-          // honor the requested hall if provided
           const clash = await prisma.booking.count({
             where: {
               hallId,

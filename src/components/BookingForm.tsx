@@ -15,6 +15,8 @@ interface ProgramType {
   name: string;
   category: ProgramCategory;
   durationMinutes: number;
+  // optional: if /api/program-types includes minKirtanis, we can use it for the jatha hint
+  minKirtanis?: number;
 }
 
 /** Union of fields we show errors under */
@@ -142,6 +144,15 @@ export default function BookingForm() {
     [programTypes, selectedProgramId]
   );
 
+  // UI hint: does this program require a full jatha?
+  const requiresJatha = useMemo(() => {
+    if (!selectedProgram) return false;
+    return (
+      selectedProgram.category === 'KIRTAN' ||
+      (selectedProgram.minKirtanis ?? 0) > 0
+    );
+  }, [selectedProgram]);
+
   // Duration
   const durationMinutes = selectedProgram?.durationMinutes ?? 0;
 
@@ -238,6 +249,25 @@ export default function BookingForm() {
       setStartHour24(allowed[0]);
     }
   }, [availableMap, date, startHour24]);
+
+  // Count how many selectable (not greyed out) times exist for the current date
+  const allowedTimesCount = useMemo(() => {
+    const minHour = minSelectableHour24(date);
+    const list = BUSINESS_HOURS_24.filter((h) => h >= minHour);
+    return list.filter(
+      (h24) =>
+        availableMap[h24] === true ||
+        (availableHours.length > 0 && availableHours.includes(h24))
+    ).length;
+  }, [date, availableMap, availableHours]);
+
+  // Disable submit unless we have a valid slot (and not still loading)
+  const canSubmit =
+    !!selectedProgramId &&
+    !!locationType &&
+    !isLoadingAvail &&
+    (availableMap[startHour24] === true ||
+      (availableHours.length > 0 && availableHours.includes(startHour24)));
 
   /* ---- Specific refs per field ---- */
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -632,6 +662,13 @@ export default function BookingForm() {
             <h3 className='text-sm font-semibold text-gray-700 mb-2'>
               Program
             </h3>
+            {requiresJatha && (
+              <div className='mb-2 rounded-lg bg-blue-50 text-blue-800 text-xs px-3 py-2'>
+                This program requires a <strong>full jatha (3 members)</strong>.
+                We’ll auto-assign a complete jatha together when your booking is
+                approved.
+              </div>
+            )}
             <div className='grid md:grid-cols-3 gap-3'>
               {programTypes.map((pt, idx) => {
                 const checked = selectedProgramId === pt.id;
@@ -806,6 +843,15 @@ export default function BookingForm() {
                     Unavailable times are greyed out.
                   </p>
                 )}
+                {!isLoadingAvail &&
+                  selectedProgramId &&
+                  locationType &&
+                  allowedTimesCount === 0 && (
+                    <p className='text-xs text-amber-700 bg-amber-50 rounded mt-2 p-2'>
+                      No staffed slots available for this program and date. Try
+                      a different time, date, or location.
+                    </p>
+                  )}
                 {isLoadingAvail && (
                   <p
                     className='text-xs text-gray-500 mt-1'
@@ -917,11 +963,17 @@ export default function BookingForm() {
             </div>
             <div className='flex items-end mb-2'>
               <button
-                className={`btn btn-primary w-full ${submitting ? 'opacity-70' : ''}`}
-                disabled={submitting}
+                className={`btn btn-primary w-full ${
+                  submitting || isLoadingAvail || !canSubmit ? 'opacity-70' : ''
+                }`}
+                disabled={submitting || isLoadingAvail || !canSubmit}
                 type='submit'
               >
-                {submitting ? 'Submitting…' : 'Create Booking'}
+                {submitting
+                  ? 'Submitting…'
+                  : isLoadingAvail
+                    ? 'Checking availability…'
+                    : 'Create Booking'}
               </button>
             </div>
           </div>

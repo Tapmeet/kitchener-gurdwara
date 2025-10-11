@@ -30,6 +30,11 @@ async function upsertProgram(
     requiresHall?: boolean;
     canBeOutsideGurdwara?: boolean;
     compWeight?: number;
+
+    // smart scheduling fields
+    trailingKirtanMinutes?: number; // jatha only at end
+    pathRotationMinutes?: number; // path shifts (e.g. 120)
+    pathClosingDoubleMinutes?: number; // last N minutes need 2 pathis
   }
 ) {
   const {
@@ -37,9 +42,12 @@ async function upsertProgram(
     requiresHall = false,
     canBeOutsideGurdwara = true,
     compWeight = 1,
+    trailingKirtanMinutes = 0,
+    pathRotationMinutes = 0,
+    pathClosingDoubleMinutes = 0,
   } = opts;
 
-  // normalize
+  // normalize mins vs people
   let minP = Math.max(0, opts.minPathers ?? 0);
   let minK = Math.max(0, opts.minKirtanis ?? 0);
 
@@ -62,25 +70,31 @@ async function upsertProgram(
     update: {
       category,
       durationMinutes,
-      peopleRequired: people, // use normalized
-      minPathers: minP, // use normalized
-      minKirtanis: minK, // use normalized
+      peopleRequired: people,
+      minPathers: minP,
+      minKirtanis: minK,
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
       compWeight,
+      trailingKirtanMinutes,
+      pathRotationMinutes,
+      pathClosingDoubleMinutes,
     },
     create: {
       name,
       category,
       durationMinutes,
-      peopleRequired: people, // use normalized
-      minPathers: minP, // use normalized
-      minKirtanis: minK, // use normalized
+      peopleRequired: people,
+      minPathers: minP,
+      minKirtanis: minK,
       requiresHall,
       canBeOutsideGurdwara,
       isActive: true,
       compWeight,
+      trailingKirtanMinutes,
+      pathRotationMinutes,
+      pathClosingDoubleMinutes,
     },
   });
 }
@@ -129,7 +143,7 @@ async function upsertUser(
 }
 
 async function main() {
-  // Admin + Secretary => ADMIN (use enum, not string)
+  // Admins
   await prisma.user.upsert({
     where: { email: 'admin@example.org' },
     update: { role: UserRole.ADMIN },
@@ -152,14 +166,13 @@ async function main() {
     },
   });
 
-  // Staff login accounts (Granthi + Sevadars) => STAFF
+  // Staff login accounts
   await upsertUser(
     'granthi@example.com',
     'Granthi',
     UserRole.STAFF,
     'granthi123'
   );
-
   await upsertUser(
     'sevadar1@example.com',
     'Sevadar A1',
@@ -178,7 +191,6 @@ async function main() {
     UserRole.STAFF,
     'sevadar123'
   );
-
   await upsertUser(
     'sevadar4@example.com',
     'Sevadar B1',
@@ -234,70 +246,107 @@ async function main() {
   });
 
   // Programs
+
+  // Sukhmani Sahib Path + Kirtan (1.5h total: 0.5–1h path + 1h kirtan at end)
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 120,
-    peopleRequired: 3,
-    minPathers: 0,
-    minKirtanis: 3,
+    durationMinutes: 90,
+    peopleRequired: 1, // path is one at a time
+    minPathers: 1,
+    minKirtanis: 0, // jatha only at end
     compWeight: 3,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    trailingKirtanMinutes: 60,
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
   });
+
+  // Sukhmani Sahib Path (no trailing kirtan)
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
     durationMinutes: 90,
     peopleRequired: 1,
     minPathers: 1,
     minKirtanis: 0,
     compWeight: 2,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
   });
+
+  // Anand Karaj (concurrent path + kirtan throughout, hall-only)
   await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
     durationMinutes: 180,
     peopleRequired: 4,
     minPathers: 1,
-    minKirtanis: 3,
+    minKirtanis: 3, // full jatha all through
+    compWeight: 4,
     requiresHall: true,
     canBeOutsideGurdwara: false,
-    compWeight: 4,
   });
+
+  // Akhand Path + Kirtan (49h total; path rotations + closing double + 1h kirtan at end)
   await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60,
-    peopleRequired: 4,
-    minPathers: 1,
-    minKirtanis: 3,
+    peopleRequired: 5, // overall crew size
+    minPathers: 1, // at least 1 on-duty at any moment (except closing double)
+    minKirtanis: 0, // jatha only at the end
     compWeight: 6,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    trailingKirtanMinutes: 60, // bhog kirtan
+    pathRotationMinutes: 120, // 2h shifts
+    pathClosingDoubleMinutes: 60, // last 1h uses 2 pathis
   });
-  await upsertProgram('Antim Ardas', ProgramCategory.PATH, {
-    durationMinutes: 120,
-    peopleRequired: 3,
-    minPathers: 3,
-    minKirtanis: 0,
-    compWeight: 3,
-  });
-  await upsertProgram('Alania Da Path + Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 120,
-    peopleRequired: 3,
-    minPathers: 0,
-    minKirtanis: 3,
-    compWeight: 3,
-  });
+
+  // Alania Da Path (Antim Ardas) + Kirtan (2h total, kirtan at end)
+  await upsertProgram(
+    'Alania Da Path (Antim Ardas) + Kirtan',
+    ProgramCategory.PATH,
+    {
+      durationMinutes: 120,
+      peopleRequired: 1,
+      minPathers: 1,
+      minKirtanis: 0,
+      compWeight: 3,
+      requiresHall: false,
+      canBeOutsideGurdwara: true,
+      trailingKirtanMinutes: 60,
+    }
+  );
+
+  // Assa Di War (pure kirtan)
   await upsertProgram('Assa Di War', ProgramCategory.KIRTAN, {
     durationMinutes: 180,
     peopleRequired: 3,
-    minPathers: 3,
-    minKirtanis: 0,
+    minPathers: 0,
+    minKirtanis: 3,
     compWeight: 4,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
   });
+
+  // Kirtan (pure kirtan, 1h)
   await upsertProgram('Kirtan', ProgramCategory.KIRTAN, {
     durationMinutes: 60,
     peopleRequired: 3,
     minPathers: 0,
     minKirtanis: 3,
     compWeight: 1,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
   });
+
+  // Akhand Path (48h PATH only; rotations + closing double)
   await upsertProgram('Akhand Path', ProgramCategory.PATH, {
     durationMinutes: 48 * 60,
-    peopleRequired: 4,
-    minPathers: 4,
+    peopleRequired: 5, // <-- set to 5
+    minPathers: 1,
     minKirtanis: 0,
     compWeight: 5,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    trailingKirtanMinutes: 0,
+    pathRotationMinutes: 120, // 2h shifts
+    pathClosingDoubleMinutes: 60, // last 1h uses 2 pathis
   });
 
   console.log('✅ Seed completed');

@@ -22,6 +22,7 @@ import { auth } from '@/lib/auth';
 import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
+import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
@@ -39,6 +40,12 @@ function rateLimit(key: string, limit = 10, windowMs = 60_000) {
     return true;
   }
   return false;
+}
+
+function isBusinessStartHour(h: number) {
+  const start = Math.min(...BUSINESS_HOURS_24);
+  const end = Math.max(...BUSINESS_HOURS_24) + 1;
+  return h >= start && h < end;
 }
 
 // ------------ Turnstile server verification ---------------
@@ -134,11 +141,22 @@ export async function POST(req: Request) {
       );
     }
 
-    // optional origin check
+    // optional origin check (robust)
     const origin = req.headers.get('origin') ?? '';
     const allowedOrigin = process.env.NEXTAUTH_URL ?? '';
-    if (allowedOrigin && origin && !origin.startsWith(allowedOrigin)) {
-      return NextResponse.json({ error: 'Invalid origin' }, { status: 400 });
+    if (allowedOrigin && origin) {
+      try {
+        const reqOrigin = new URL(origin).origin;
+        const allowed = new URL(allowedOrigin).origin;
+        if (reqOrigin !== allowed) {
+          return NextResponse.json(
+            { error: 'Invalid origin' },
+            { status: 400 }
+          );
+        }
+      } catch {
+        return NextResponse.json({ error: 'Invalid origin' }, { status: 400 });
+      }
     }
 
     // session (best-effort)
@@ -149,7 +167,7 @@ export async function POST(req: Request) {
       session = null;
     }
 
-    // validate
+    // validate payload
     const body =
       bodyForToken && Object.keys(bodyForToken).length
         ? bodyForToken
@@ -172,17 +190,6 @@ export async function POST(req: Request) {
 
     const start = new Date(input.start);
     const end = new Date(input.end ?? input.start);
-    const bh = isWithinBusinessHours(start, end) as
-      | boolean
-      | { ok: boolean; error?: string };
-    const bhOk = typeof bh === 'boolean' ? bh : bh.ok;
-    if (!bhOk) {
-      const reason =
-        typeof bh === 'object' && 'error' in bh && bh.error
-          ? bh.error
-          : 'Outside business hours';
-      return NextResponse.json({ error: reason }, { status: 400 });
-    }
 
     // program types
     const ptIds = (input.items || []).map((i: any) => i.programTypeId);
@@ -201,8 +208,12 @@ export async function POST(req: Request) {
         canBeOutsideGurdwara: true,
         requiresHall: true,
         peopleRequired: true,
+        durationMinutes: true,
+        // needed for trailing-kirtan server guard
+        trailingKirtanMinutes: true,
       },
     });
+
     if (programs.length !== ptIds.length) {
       return NextResponse.json(
         { error: 'Invalid program types' },
@@ -235,6 +246,128 @@ export async function POST(req: Request) {
         )
       )
       .reduce((a, b) => a + b, 0);
+
+    // How long is this block?
+    const durationMinutes = Math.max(
+      ...programs.map((p) => p.durationMinutes || 0)
+    );
+    const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
+    const isLong = durationHours >= 36;
+    const isPurePath = required.KIRTAN === 0;
+    const isLongPath = isLong && isPurePath;
+
+    // Business-hours guard:
+    // - Normal: start+end must be within business hours (existing util).
+    // - Long path: only enforce that the *start* is a business-hour.
+    if (!isLongPath) {
+      const bh = isWithinBusinessHours(start, end) as
+        | boolean
+        | { ok: boolean; error?: string };
+      const bhOk = typeof bh === 'boolean' ? bh : bh.ok;
+      if (!bhOk) {
+        const reason =
+          typeof bh === 'object' && 'error' in bh && bh.error
+            ? bh.error
+            : 'Outside business hours';
+        return NextResponse.json({ error: reason }, { status: 400 });
+      }
+    } else {
+      if (!isBusinessStartHour(start.getHours())) {
+        return NextResponse.json(
+          { error: 'Start time must be during business hours (7:00–19:00).' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // If someone tries to include KIRTAN in a multi-day booking, reject with guidance.
+    if (isLong && !isPurePath) {
+      return NextResponse.json(
+        {
+          error:
+            'Kirtan cannot be scheduled inside a multi-day window. Create a 48h Akhand Path booking, then a separate short Kirtan (“Samapti”) at the end.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // ——— Trailing-Kirtan whole-jatha server guard ———
+    const trailingMax = Math.max(
+      ...programs.map((p) => p.trailingKirtanMinutes ?? 0)
+    );
+    const needsTrailingJatha = trailingMax > 0;
+
+    if (needsTrailingJatha) {
+      const tStart = new Date(end.getTime() - trailingMax * 60_000);
+
+      // Build busy-by-hour using assignment windows; respect outside buffer
+      const busyByHour: Record<number, Set<string>> = {};
+      for (const h of BUSINESS_HOURS_24) busyByHour[h] = new Set();
+
+      const asns = await prisma.bookingAssignment.findMany({
+        where: {
+          booking: {
+            start: { lt: end },
+            end: { gt: tStart },
+            status: { in: ['PENDING', 'CONFIRMED'] },
+          },
+        },
+        select: {
+          staffId: true,
+          start: true,
+          end: true,
+          booking: { select: { start: true, end: true, locationType: true } },
+        },
+      });
+
+      for (const a of asns) {
+        const sRaw = a.start ?? a.booking.start;
+        const eRaw = a.end ?? a.booking.end;
+        const s = new Date(sRaw);
+        const e = new Date(eRaw);
+        const paddedStart =
+          a.booking.locationType === 'OUTSIDE_GURDWARA'
+            ? new Date(s.getTime() - OUTSIDE_BUFFER_MS)
+            : s;
+        const paddedEnd =
+          a.booking.locationType === 'OUTSIDE_GURDWARA'
+            ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
+            : e;
+        const hrs = hourSpan(paddedStart, paddedEnd).filter((h) =>
+          BUSINESS_HOURS_24.includes(h)
+        );
+        for (const h of hrs) busyByHour[h].add(a.staffId);
+      }
+
+      const jathaGroups = await getJathaGroups();
+      const trailingHours = hourSpan(tStart, end).filter((h) =>
+        BUSINESS_HOURS_24.includes(h)
+      );
+
+      function countWholeFreeJathasAtHour(busySet: Set<string>) {
+        let free = 0;
+        for (const [_k, members] of jathaGroups) {
+          const ids = members.map((m) => m.id);
+          if (ids.length >= JATHA_SIZE && ids.every((id) => !busySet.has(id))) {
+            free += 1;
+          }
+        }
+        return free;
+      }
+
+      for (const hh of trailingHours) {
+        const freeJ = countWholeFreeJathasAtHour(busyByHour[hh]);
+        if (freeJ < 1) {
+          return NextResponse.json(
+            {
+              error:
+                'No full jatha is free during the trailing Kirtan window. Pick a different time/date.',
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
 
     // ————— Per-hall selection (Small → Main → Upper) —————
     let hallId: string | null = null;
@@ -411,40 +544,43 @@ export async function POST(req: Request) {
 
       // Ensure capacity exists each hour
       for (const h of hours) {
-        for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
-          const total = totalPool[r] ?? 0;
-          const usedOpp =
-            input.locationType === 'GURDWARA'
-              ? (usedOUT[h][r] ?? 0)
-              : (usedGW[h][r] ?? 0);
-          const usedHere =
-            input.locationType === 'GURDWARA'
-              ? (usedGW[h][r] ?? 0)
-              : (usedOUT[h][r] ?? 0);
+        if (!isLongPath) {
+          for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
+            const total = totalPool[r] ?? 0;
+            const usedOpp =
+              input.locationType === 'GURDWARA'
+                ? (usedOUT[h][r] ?? 0)
+                : (usedGW[h][r] ?? 0);
+            const usedHere =
+              input.locationType === 'GURDWARA'
+                ? (usedGW[h][r] ?? 0)
+                : (usedOUT[h][r] ?? 0);
 
-          // Shared pool vs per-location cap
-          const sharedLimit = Math.max(0, total - usedOpp);
-          const locLimit = Math.min(
-            sharedLimit,
-            (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+            // Shared pool vs per-location cap
+            const sharedLimit = Math.max(0, total - usedOpp);
+            const locLimit = Math.min(
+              sharedLimit,
+              (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+            );
+
+            const remaining = Math.max(0, locLimit - usedHere);
+            const need = (required[r] ?? 0) as number;
+            if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
+          }
+
+          // Headcount guard
+          const usedOppHead =
+            input.locationType === 'GURDWARA' ? usedHeadOUT[h] : usedHeadGW[h];
+          const usedHereHead =
+            input.locationType === 'GURDWARA' ? usedHeadGW[h] : usedHeadOUT[h];
+          const remainingHead = Math.max(
+            0,
+            totalUniqueStaff - usedOppHead - usedHereHead
           );
-
-          const remaining = Math.max(0, locLimit - usedHere);
-          const need = (required[r] ?? 0) as number;
-          if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
+          if (remainingHead < headcountRequired)
+            throw new Error('CAPACITY_EXCEEDED');
         }
-
-        // Headcount guard
-        const usedOppHead =
-          input.locationType === 'GURDWARA' ? usedHeadOUT[h] : usedHeadGW[h];
-        const usedHereHead =
-          input.locationType === 'GURDWARA' ? usedHeadGW[h] : usedHeadOUT[h];
-        const remainingHead = Math.max(
-          0,
-          totalUniqueStaff - usedOppHead - usedHereHead
-        );
-        if (remainingHead < headcountRequired)
-          throw new Error('CAPACITY_EXCEEDED');
+        // Long path: skip staff pool/headcount checks; we just hold the slot/hall.
       }
 
       const createdRaw = await tx.booking.create({
@@ -495,18 +631,27 @@ export async function POST(req: Request) {
       return normalized;
     });
 
-    // Auto-assign if enabled (you can keep this off and assign on approval instead)
+    // Auto-assign: optional. Skipping for long path is usually sensible.
     if (process.env.AUTO_ASSIGN_ENABLED === '1') {
       try {
-        const res = await autoAssignForBooking(created.id);
-        if (res?.created?.length && process.env.ASSIGN_NOTIFICATIONS === '1') {
-          await notifyAssignmentsStaff(
-            created.id,
-            res.created.map((a) => ({
-              staffId: a.staffId,
-              bookingItemId: a.bookingItemId,
-            }))
-          );
+        // Don’t auto-assign for long path windows
+        const durationHrs =
+          (created.end.getTime() - created.start.getTime()) / 3_600_000;
+        const skipAssign = durationHrs >= 36 && required.KIRTAN === 0;
+        if (!skipAssign) {
+          const res = await autoAssignForBooking(created.id);
+          if (
+            res?.created?.length &&
+            process.env.ASSIGN_NOTIFICATIONS === '1'
+          ) {
+            await notifyAssignmentsStaff(
+              created.id,
+              res.created.map((a) => ({
+                staffId: a.staffId,
+                bookingItemId: a.bookingItemId,
+              }))
+            );
+          }
         }
       } catch (e) {
         console.error('Auto-assign or notify failed', e);
