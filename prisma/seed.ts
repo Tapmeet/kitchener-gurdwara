@@ -42,6 +42,17 @@ async function upsertProgram(
     compWeight = 1,
   } = opts;
 
+  // --- normalize min roles and peopleRequired ---
+  const _minP = Math.max(0, minPathers ?? 0);
+  const _minK = Math.max(0, minKirtanis ?? 0);
+  const _minSum = _minP + _minK;
+  const _people = Math.max(peopleRequired ?? 0, _minSum);
+  if ((peopleRequired ?? 0) < _minSum) {
+    console.warn(
+      `Adjusting peopleRequired for ${name}: ${peopleRequired} -> ${_people} to satisfy minPathers+minKirtanis=${_minSum}`
+    );
+  }
+
   await prisma.programType.upsert({
     where: { name },
     update: {
@@ -250,6 +261,13 @@ async function main() {
     compWeight: 6,
   });
   await upsertProgram('Antim Ardas', ProgramCategory.PATH, {
+    durationMinutes: 120,
+    peopleRequired: 3,
+    minPathers: 1,
+    minKirtanis: 1,
+    compWeight: 3,
+  });
+  await upsertProgram('Alania Da Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 120,
     peopleRequired: 3,
     minPathers: 1,
