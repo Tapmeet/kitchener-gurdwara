@@ -7,12 +7,7 @@ import type { NextAuthOptions } from 'next-auth';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcrypt';
 
-export type AllowedRole =
-  | 'ADMIN'
-  | "ADMIN"
-  | "STAFF"
-  | 'LANGRI'
-  | 'VIEWER';
+export type AllowedRole = 'ADMIN' | 'STAFF' | 'LANGRI' | 'VIEWER';
 
 function parseAdminEmails(): string[] {
   const raw = process.env.ADMIN_EMAILS || '';

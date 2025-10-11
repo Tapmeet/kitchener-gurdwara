@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
+type Role = 'ADMIN' | 'STAFF' | 'LANGRI' | 'VIEWER' | (string & {});
+
 type UserMeta = {
   name?: string | null;
   email?: string | null;
   image?: string | null;
-  role?: string | null;
+  role?: Role | null;
 };
 
 type Props = {
@@ -80,6 +82,10 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
   const displayName =
     user?.name || user?.email || (isAuthenticated ? 'User' : 'Guest');
 
+  const role = (user?.role ?? 'VIEWER') as Role;
+  const canSeeMySchedule =
+    isAuthenticated && (role === 'STAFF' || role === 'LANGRI');
+
   return (
     <header className='sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/10 bg-gradient-to-br from-blue-600 to-indigo-600 text-white border-b border-white/15'>
       {/* Skip link */}
@@ -112,6 +118,10 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
           >
             <ActiveLink href='/'>Calendar</ActiveLink>
             <ActiveLink href='/book'>Book</ActiveLink>
+
+            {canSeeMySchedule && (
+              <ActiveLink href={'/my-assignments'}>My Schedule</ActiveLink>
+            )}
 
             {!isAuthenticated ? (
               <Link
@@ -184,14 +194,13 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
               <ActiveLink href='/book' onClick={() => setOpen(false)}>
                 Book
               </ActiveLink>
-              {isAuthenticated && (
-                <ActiveLink href='/dashboard' onClick={() => setOpen(false)}>
-                  Dashboard
-                </ActiveLink>
-              )}
-              {isAuthenticated && isPrivileged && (
-                <ActiveLink href='/admin' onClick={() => setOpen(false)}>
-                  Admin
+
+              {canSeeMySchedule && (
+                <ActiveLink
+                  href={'/my-assignments'}
+                  onClick={() => setOpen(false)}
+                >
+                  My Schedule
                 </ActiveLink>
               )}
 

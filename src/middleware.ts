@@ -6,7 +6,7 @@ export default withAuth({
       const isAdminPath = req.nextUrl.pathname.startsWith('/admin');
       if (!isAdminPath) return true;
       const role = (token as any)?.role;
-      return role === "ADMIN";
+      return role === 'ADMIN';
     },
   },
 });
