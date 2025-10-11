@@ -1,41 +1,47 @@
+// src/app/api/bookings/[id]/confirm/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 
-export async function POST(_: Request, { params }: { params: { id: string } }) {
+export async function POST(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> } // <-- params is a Promise
+) {
   const session = await auth();
   const role = (session?.user as any)?.role;
-  if (role !== 'ADMIN')
+  if (role !== 'ADMIN') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
 
-  const id = params.id;
+  const { id } = await ctx.params; // <-- await it
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const booking = await tx.booking.update({
-      where: { id },
-      data: {
-        status: 'CONFIRMED',
-        approvedAt: new Date(),
-        approvedById: (session?.user as any)?.id ?? null,
-      },
-      select: { id: true, start: true, end: true },
-    });
+  const updated = await prisma.booking.update({
+    where: { id },
+    data: {
+      status: 'CONFIRMED',
+      approvedAt: new Date(),
+      approvedById: (session?.user as any)?.id ?? null,
+    },
+    select: { id: true },
+  });
 
-    // Auto-assign now
-    const res = await autoAssignForBooking(id);
-    if (res.created.length) {
+  // Run auto-assign after status flips to CONFIRMED
+  try {
+    const res = await autoAssignForBooking(updated.id);
+    if (res?.created?.length) {
       await notifyAssignmentsStaff(
-        id,
+        updated.id,
         res.created.map((a) => ({
           staffId: a.staffId,
           bookingItemId: a.bookingItemId,
         }))
       );
     }
-    return booking;
-  });
+  } catch {
+    // best-effort: swallow errors so approval still succeeds
+  }
 
   return NextResponse.json({ ok: true, id: updated.id });
 }

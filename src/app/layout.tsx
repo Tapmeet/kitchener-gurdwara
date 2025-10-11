@@ -24,6 +24,7 @@ export async function AdminSubnav() {
       <div className="mx-auto max-w-6xl px-4 py-2 flex items-center gap-4 text-sm">
         <a href="/admin/schedule" className="underline hover:no-underline">Admin · Schedule</a>
         <a href="/admin/staff" className="underline hover:no-underline">Admin · Staff</a>
+        <a href="/admin/bookings" className="underline hover:no-underline">Admin · Bookings</a>
         <a href="/admin/assignments/swap" className="underline hover:no-underline">Admin · Swap Assignments</a>
       </div>
     </nav>
