@@ -1,6 +1,7 @@
 // src/components/BookingForm.tsx
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Script from 'next/script';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { formatPhoneLive, toE164Generic } from '@/lib/phone';
@@ -69,6 +70,7 @@ function mapPathToKey(raw: unknown): FieldKey {
     'contactName',
     'contactPhone',
     'hallId',
+    'contactEmail',
   ];
   return known.includes(s as FieldKey) ? (s as FieldKey) : 'form';
 }
@@ -106,15 +108,13 @@ function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
 
 const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7);
 
-function visibleStartHours(
-  serverAvailableHours: number[] | null | undefined
-): number[] {
-  if (Array.isArray(serverAvailableHours) && serverAvailableHours.length > 0) {
-    const s = new Set(serverAvailableHours);
-    return BUSINESS_HOURS_24.filter((h) => s.has(h));
+/* ---------- Turnstile (optional, progressive) ---------- */
+declare global {
+  interface Window {
+    onTurnstileSuccess?: (token: string) => void;
   }
-  return BUSINESS_HOURS_24;
 }
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
 
 /* ---------- component ---------- */
 
@@ -130,14 +130,10 @@ export default function BookingForm() {
   // Date + time
   const now = useMemo(() => new Date(), []);
   const [date, setDate] = useState(toLocalDateString(now));
-
-  // Single 24h start time within 7–19
-  const initialStartHour24 = (() => {
+  const [startHour24, setStartHour24] = useState<number>(() => {
     const h = now.getHours();
-    if (h < 7 || h > 19) return 7;
-    return h;
-  })();
-  const [startHour24, setStartHour24] = useState<number>(initialStartHour24);
+    return h < 7 || h > 19 ? 7 : h;
+  });
 
   // Program: SINGLE-SELECT
   const [selectedProgramId, setSelectedProgramId] = useState<string>('');
@@ -152,8 +148,21 @@ export default function BookingForm() {
   // Attendees
   const [attendees, setAttendees] = useState<string>('');
 
-  // Available start hours
+  // Availability payload from server
   const [availableHours, setAvailableHours] = useState<number[]>([]);
+  const [availableMap, setAvailableMap] = useState<Record<number, boolean>>({});
+  const [isLoadingAvail, setIsLoadingAvail] = useState(false);
+  // (Optional) which hall would be picked per hour (id)
+  // const [hallByHour, setHallByHour] = useState<Record<number, string | null>>({});
+
+  // Turnstile token
+  const [turnstileToken, setTurnstileToken] = useState<string>('');
+  useEffect(() => {
+    window.onTurnstileSuccess = (token: string) => setTurnstileToken(token);
+    return () => {
+      delete window.onTurnstileSuccess;
+    };
+  }, []);
 
   // End-time preview
   const endPreview = useMemo(() => {
@@ -172,10 +181,13 @@ export default function BookingForm() {
       .catch(() => {});
   }, []);
 
-  // Fetch availability (hall is backend concern; we just pass attendees + location)
+  // Fetch availability (server computes hall feasibility too)
   useEffect(() => {
     if (!selectedProgramKey || !locationType) {
       setAvailableHours([]);
+      setAvailableMap({});
+      setIsLoadingAvail(false);
+      // setHallByHour({});
       return;
     }
 
@@ -189,15 +201,27 @@ export default function BookingForm() {
     const url = `/api/availability?${params.toString()}`;
     let aborted = false;
 
+    setIsLoadingAvail(true);
+    // clear current map to avoid showing stale state while fetching
+    setAvailableMap({});
+    setAvailableHours([]);
+
     fetch(url)
       .then((r) => r.json())
       .then((j) => {
         if (aborted) return;
         setAvailableHours(Array.isArray(j.hours) ? j.hours : []);
+        setAvailableMap(j.availableByHour || {});
+        // setHallByHour(j.hallByHour || {});
       })
       .catch(() => {
         if (aborted) return;
         setAvailableHours([]);
+        setAvailableMap({});
+        // setHallByHour({});
+      })
+      .finally(() => {
+        if (!aborted) setIsLoadingAvail(false);
       });
 
     return () => {
@@ -205,16 +229,15 @@ export default function BookingForm() {
     };
   }, [date, selectedProgramKey, locationType, attendees]);
 
-  // Keep selected start hour valid
+  // Keep selected start hour valid (choose first available if current becomes unavailable)
   useEffect(() => {
     const minHour = minSelectableHour24(date);
-    const allowed = visibleStartHours(availableHours).filter(
-      (h) => h >= minHour
-    );
-    if (allowed.length && !allowed.includes(startHour24)) {
+    const allList = BUSINESS_HOURS_24.filter((h) => h >= minHour);
+    const allowed = allList.filter((h) => availableMap[h]);
+    if (allowed.length && !availableMap[startHour24]) {
       setStartHour24(allowed[0]);
     }
-  }, [availableHours, date, startHour24]);
+  }, [availableMap, date, startHour24]);
 
   /* ---- Specific refs per field ---- */
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -305,6 +328,8 @@ export default function BookingForm() {
     setPhone('');
     setSelectedProgramId('');
     setAvailableHours([]);
+    setAvailableMap({});
+    // setHallByHour({});
     setAttendees('');
     if (form) form.reset();
   }
@@ -333,15 +358,20 @@ export default function BookingForm() {
       nextErrors.address = FRIENDLY.address;
     }
 
-    if (availableHours.length > 0 && !availableHours.includes(startHour24)) {
-      nextErrors.startHour24 = 'That time is taken. Please pick another time.';
-    }
-    if (
-      date === todayLocalDateString() &&
-      startHour24 < minSelectableHour24(date)
-    ) {
+    // Block submission if the chosen hour is unavailable
+    const minHour = minSelectableHour24(date);
+    const isPast = date === todayLocalDateString() && startHour24 < minHour;
+    const slotKnown =
+      Object.keys(availableMap).length > 0 || availableHours.length > 0;
+    const slotAvailable =
+      availableMap[startHour24] === true ||
+      (availableHours.length > 0 && availableHours.includes(startHour24));
+
+    if (isPast) {
       nextErrors.startHour24 =
         'That time has already passed. Pick a later time.';
+    } else if (slotKnown && !slotAvailable) {
+      nextErrors.startHour24 = 'That time is unavailable. Please pick another.';
     }
 
     const startISO = toISOFromLocalDateHour(date, startHour24);
@@ -366,7 +396,7 @@ export default function BookingForm() {
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      // hallId is not sent; server chooses automatically
+      // hallId not sent; server auto-picks/validates
       address:
         loc === 'OUTSIDE_GURDWARA'
           ? String(fd.get('address') || '').trim() || null
@@ -394,10 +424,13 @@ export default function BookingForm() {
       return;
     }
 
-    // Submit to server
+    // Submit to server (include Turnstile token if present)
     const res = await fetch('/api/bookings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(turnstileToken ? { 'x-turnstile-token': turnstileToken } : {}),
+      },
       body: JSON.stringify(payload),
     });
 
@@ -443,6 +476,22 @@ export default function BookingForm() {
 
   return (
     <section className='section'>
+      {/* Turnstile (optional, only renders if site key provided) */}
+      {TURNSTILE_SITE_KEY && (
+        <>
+          <Script
+            src='https://challenges.cloudflare.com/turnstile/v0/api.js'
+            async
+            defer
+          />
+          <div
+            className='cf-turnstile mb-4'
+            data-sitekey={TURNSTILE_SITE_KEY}
+            data-callback='onTurnstileSuccess'
+          />
+        </>
+      )}
+
       {/* Floating toast (no layout shift) */}
       <div aria-live='polite' aria-atomic='true'>
         {success && (
@@ -660,45 +709,85 @@ export default function BookingForm() {
               <div>
                 <label className='label' htmlFor='startHour24'>
                   Start Time
+                  {isLoadingAvail && (
+                    <span className='ml-2 inline-flex items-center text-xs text-gray-500'>
+                      <svg
+                        aria-hidden
+                        className='mr-1 h-4 w-4 animate-spin'
+                        viewBox='0 0 24 24'
+                      >
+                        <circle
+                          cx='12'
+                          cy='12'
+                          r='10'
+                          stroke='currentColor'
+                          strokeWidth='4'
+                          fill='none'
+                          opacity='0.25'
+                        />
+                        <path
+                          d='M22 12a10 10 0 0 1-10 10'
+                          fill='currentColor'
+                        />
+                      </svg>
+                      Loading…
+                    </span>
+                  )}
                 </label>
                 <select
                   ref={startHour24Ref}
                   id='startHour24'
                   className={`select ${errors.startHour24 ? invalidCls : ''}`}
-                  value={startHour24}
+                  value={isLoadingAvail ? ('' as any) : startHour24}
                   onChange={(e) => {
                     setStartHour24(Number(e.target.value));
                     clearFieldError('startHour24');
                   }}
-                  disabled={!selectedProgramId || !locationType}
+                  disabled={
+                    isLoadingAvail || !selectedProgramId || !locationType
+                  }
+                  aria-busy={isLoadingAvail}
                   aria-invalid={!!errors.startHour24}
                   aria-describedby={
                     errors.startHour24 ? 'err-startHour24' : undefined
                   }
                 >
-                  {(() => {
-                    const minHour = minSelectableHour24(date);
-                    const list = visibleStartHours(availableHours).filter(
-                      (h) => h >= minHour
-                    );
-
-                    if (list.length === 0) {
-                      return (
-                        <option value='' disabled>
-                          No times available for the selected date
-                        </option>
+                  {isLoadingAvail ? (
+                    <option value='' disabled>
+                      Loading available times…
+                    </option>
+                  ) : (
+                    (() => {
+                      const minHour = minSelectableHour24(date);
+                      const list = BUSINESS_HOURS_24.filter(
+                        (h) => h >= minHour
                       );
-                    }
 
-                    return list.map((h24) => {
-                      const { h12, ap } = to12(h24);
-                      return (
-                        <option key={h24} value={h24}>
-                          {h12}:00 {ap}
-                        </option>
-                      );
-                    });
-                  })()}
+                      if (list.length === 0) {
+                        return (
+                          <option value='' disabled>
+                            No times available for the selected date
+                          </option>
+                        );
+                      }
+
+                      return list.map((h24) => {
+                        const { h12, ap } = to12(h24);
+                        const isAvailable =
+                          availableMap[h24] === true ||
+                          (availableHours.length > 0 &&
+                            availableHours.includes(h24));
+                        const label = `${h12}:00 ${ap}${
+                          isAvailable ? '' : ' — unavailable'
+                        }`;
+                        return (
+                          <option key={h24} value={h24} disabled={!isAvailable}>
+                            {label}
+                          </option>
+                        );
+                      });
+                    })()
+                  )}
                 </select>
 
                 {errors.startHour24 && (
@@ -712,20 +801,20 @@ export default function BookingForm() {
                     Past times today are hidden.
                   </p>
                 )}
-                {selectedProgramId &&
-                  locationType &&
-                  availableHours.length > 0 && (
-                    <p className='text-xs text-gray-500 mt-1'>
-                      Booked hours are hidden for {date}.
-                    </p>
-                  )}
-                {selectedProgramId &&
-                  locationType &&
-                  availableHours.length === 0 && (
-                    <p className='text-xs text-gray-500 mt-1'>
-                      Showing standard hours (7 AM–7 PM).
-                    </p>
-                  )}
+                {!isLoadingAvail && selectedProgramId && locationType && (
+                  <p className='text-xs text-gray-500 mt-1'>
+                    Unavailable times are greyed out.
+                  </p>
+                )}
+                {isLoadingAvail && (
+                  <p
+                    className='text-xs text-gray-500 mt-1'
+                    role='status'
+                    aria-live='polite'
+                  >
+                    Fetching available times…
+                  </p>
+                )}
               </div>
 
               <div className='md:col-span-2 -mt-2'>

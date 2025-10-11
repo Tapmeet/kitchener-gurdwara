@@ -1,3 +1,4 @@
+// src/app/api/availability/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { LocationType } from '@prisma/client';
@@ -9,6 +10,8 @@ import {
 } from '@/lib/businessHours';
 import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
+import { pickFirstFreeHall } from '@/lib/halls';
+import { getTotalUniqueStaffCount } from '@/lib/headcount';
 
 // 15 min buffer (outside gurdwara only)
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
@@ -23,7 +26,7 @@ export async function GET(req: Request) {
       | '';
     const hallId = searchParams.get('hallId') || undefined;
 
-    // NEW: accept multi-select, fall back to single
+    // Multi-select programs (fallback to single)
     const idsCsv =
       searchParams.get('programTypeIds') ||
       searchParams.get('programTypeId') ||
@@ -49,6 +52,7 @@ export async function GET(req: Request) {
         minKirtanis: true,
         canBeOutsideGurdwara: true,
         requiresHall: true,
+        peopleRequired: true,
       },
     });
     if (!programs.length) {
@@ -58,7 +62,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // Basic location rules
+    // Location rules: outside must allow it
     if (
       locationType === 'OUTSIDE_GURDWARA' &&
       programs.some((p) => !p.canBeOutsideGurdwara)
@@ -67,55 +71,61 @@ export async function GET(req: Request) {
         hours: [],
         remainingByHour: {},
         required: {},
+        availableByHour: {},
+        hallByHour: {},
         error: 'One or more programs cannot be performed outside.',
       });
     }
-    if (
-      locationType === 'GURDWARA' &&
-      programs.some((p) => p.requiresHall) &&
-      !hallId
-    ) {
-      return NextResponse.json({
-        hours: [],
-        remainingByHour: {},
-        required: {},
-        error: 'Hall is required for selected programs.',
-      });
-    }
 
-    // Required roles vector (sum of all selected programs)
+    // Required roles vector (sum of selected programs)
     const required: RoleVector = programs.reduce(
-      (acc, p) => add(acc, reqFromProgram(p)),
+      (acc, p) => add(acc, reqFromProgram(p as any)),
       { PATH: 0, KIRTAN: 0 }
     );
 
-    // Duration = longest program (they run concurrently in the same booking)
+    // Headcount required (peopleRequired dominates min sums)
+    const headcountRequired = programs
+      .map((p) =>
+        Math.max(
+          p.peopleRequired ?? 0,
+          (p.minPathers ?? 0) + (p.minKirtanis ?? 0)
+        )
+      )
+      .reduce((a, b) => a + b, 0);
+
+    // Duration = longest program (run concurrently in one booking)
     const durationMinutes = Math.max(
       ...programs.map((p) => p.durationMinutes || 0)
     );
-    const durationHours = Math.max(1, Math.ceil(durationMinutes / 60)); // round up to whole hours
+    const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
 
-    // Build candidate start hours within business window for that date (7..19-duration)
+    // Candidate start hours
     const dayLocal = new Date(`${dateStr}T00:00:00`);
     let candidates = allowedStartHoursFor(dayLocal, durationHours);
 
-    // (Optional but recommended) Also hide past times for today on the API
+    // Hide past hours if querying "today"
     const minHourToday = minSelectableHour24(dayLocal, new Date());
     candidates = candidates.filter((h) => h >= minHourToday);
 
-    // Fetch ALL overlaps that touch the day (both locations → shared pool math)
+    // Overlaps that touch the day (both locations → shared pool math)
     const dayStart = new Date(`${dateStr}T00:00:00`);
     const dayEnd = new Date(`${dateStr}T23:59:59.999`);
     const overlaps = await prisma.booking.findMany({
       where: {
         start: { lte: dayEnd },
         end: { gte: dayStart },
-        // NOTE: we DO NOT filter by hall here for staffing, since sevadars are a shared pool.
+        status: { in: ['PENDING', 'CONFIRMED'] }, // only active holds affect availability
       },
       include: {
         items: {
           include: {
-            programType: { select: { minPathers: true, minKirtanis: true } },
+            programType: {
+              select: {
+                minPathers: true,
+                minKirtanis: true,
+                peopleRequired: true,
+              },
+            },
           },
         },
       },
@@ -128,15 +138,27 @@ export async function GET(req: Request) {
       usedGW[h] = { PATH: 0, KIRTAN: 0 };
       usedOUT[h] = { PATH: 0, KIRTAN: 0 };
     }
+    const usedHeadGW: Record<number, number> = {};
+    const usedHeadOUT: Record<number, number> = {};
+    for (const h of BUSINESS_HOURS_24) {
+      usedHeadGW[h] = 0;
+      usedHeadOUT[h] = 0;
+    }
 
     for (const b of overlaps) {
-      // Sum role demand for this booking
       const vec = b.items.reduce(
         (acc, it) => add(acc, reqFromProgram(it.programType as any)),
         { PATH: 0, KIRTAN: 0 }
       );
 
-      // Apply buffer around OUTSIDE bookings when calculating which hours they occupy
+      const headForBooking = b.items
+        .map((it: any) => {
+          const pt: any = it.programType;
+          const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+          return Math.max(pt.peopleRequired ?? 0, minSum);
+        })
+        .reduce((a: number, b: number) => a + b, 0);
+
       const s = new Date(b.start);
       const e = new Date(b.end);
       const paddedStart =
@@ -155,23 +177,25 @@ export async function GET(req: Request) {
         if (b.locationType === 'GURDWARA') {
           usedGW[h].PATH += vec.PATH ?? 0;
           usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
+          usedHeadGW[h] += headForBooking;
         } else {
           usedOUT[h].PATH += vec.PATH ?? 0;
           usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
+          usedHeadOUT[h] += headForBooking;
         }
       }
     }
 
-    // Total pool from active staff; per-location max (logistics cap)
+    // Total pool & per-location caps
+    const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
     const totalPool = await getTotalPoolPerRole(); // { PATH, KIRTAN }
     const locMax = getMaxPerLocationPerRole(locationType); // { PATH, KIRTAN }
 
-    // Evaluate each candidate start hour across its entire span
+    // Evaluate each candidate across its whole span (staff feasibility)
     const hours: number[] = [];
     const remainingByHour: Record<number, RoleVector> = {};
 
     for (const hStart of candidates) {
-      // Candidate span start/end for this booking
       const spanStart = new Date(
         dayLocal.getFullYear(),
         dayLocal.getMonth(),
@@ -185,7 +209,7 @@ export async function GET(req: Request) {
         spanStart.getTime() + durationMinutes * 60 * 1000
       );
 
-      // Apply buffer if requesting OUTSIDE
+      // Staff travel buffer if OUTSIDE
       const candStart =
         locationType === 'OUTSIDE_GURDWARA'
           ? new Date(spanStart.getTime() - OUTSIDE_BUFFER_MS)
@@ -199,7 +223,6 @@ export async function GET(req: Request) {
         BUSINESS_HOURS_24.includes(h)
       );
 
-      // Compute min remaining across the span per role (conservative value to show in UI)
       const minRem: RoleVector = {
         PATH: Number.MAX_SAFE_INTEGER,
         KIRTAN: Number.MAX_SAFE_INTEGER,
@@ -211,41 +234,111 @@ export async function GET(req: Request) {
           const total = totalPool[r] ?? 0;
           const usedOpp =
             locationType === 'GURDWARA'
-              ? usedOUT[hh][r] ?? 0
-              : usedGW[hh][r] ?? 0;
+              ? (usedOUT[hh][r] ?? 0)
+              : (usedGW[hh][r] ?? 0);
           const usedHere =
             locationType === 'GURDWARA'
-              ? usedGW[hh][r] ?? 0
-              : usedOUT[hh][r] ?? 0;
+              ? (usedGW[hh][r] ?? 0)
+              : (usedOUT[hh][r] ?? 0);
 
-          // Shared pool: what's left after the other location
           const sharedLimit = Math.max(0, total - usedOpp);
-          // Logistics per-location cap
           const locLimit = Math.min(
             sharedLimit,
-            locMax[r] ?? Number.MAX_SAFE_INTEGER
+            (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
           );
 
           const remaining = Math.max(0, locLimit - usedHere);
           minRem[r] = Math.min(minRem[r] as number, remaining);
 
           if (remaining < (required[r] ?? 0)) {
-            ok = false; // this start hour cannot satisfy the span
+            ok = false;
           }
         }
         if (!ok) break;
+
+        // Headcount guard (unique humans across roles)
+        const usedOppHead =
+          locationType === 'GURDWARA' ? usedHeadOUT[hh] : usedHeadGW[hh];
+        const usedHereHead =
+          locationType === 'GURDWARA' ? usedHeadGW[hh] : usedHeadOUT[hh];
+        const remainingHead = Math.max(
+          0,
+          totalUniqueStaff - usedOppHead - usedHereHead
+        );
+        if (remainingHead < headcountRequired) {
+          ok = false;
+          break;
+        }
       }
 
       if (ok) {
-        hours.push(hStart);
-        // If minRem is still MAX_SAFE_INTEGER (zero-length span), normalize to 0s
         if (minRem.PATH === Number.MAX_SAFE_INTEGER) minRem.PATH = 0;
         if (minRem.KIRTAN === Number.MAX_SAFE_INTEGER) minRem.KIRTAN = 0;
+        hours.push(hStart);
         remainingByHour[hStart] = minRem;
       }
     }
 
-    return NextResponse.json({ hours, remainingByHour, required });
+    // Per-hour hall feasibility (+ which hall would be picked)
+    const availableByHour: Record<number, boolean> = {};
+    const hallByHour: Record<number, string | null> = {};
+
+    const needsHall =
+      programs.some((p) => p.requiresHall) || locationType === 'GURDWARA';
+
+    for (const hStart of hours) {
+      const slotStart = new Date(
+        dayLocal.getFullYear(),
+        dayLocal.getMonth(),
+        dayLocal.getDate(),
+        hStart,
+        0,
+        0,
+        0
+      );
+      const slotEnd = new Date(
+        slotStart.getTime() + durationMinutes * 60 * 1000
+      );
+
+      // Staff feasibility (from earlier calc)
+      const req = required;
+      const rem = remainingByHour[hStart] ?? { PATH: 0, KIRTAN: 0 };
+      const hasStaff = rem.PATH >= req.PATH && rem.KIRTAN >= req.KIRTAN;
+
+      // Hall feasibility
+      let hasHall = true;
+      let hallPick: string | null = null;
+
+      if (needsHall) {
+        if (hallId) {
+          // honor the requested hall if provided
+          const clash = await prisma.booking.count({
+            where: {
+              hallId,
+              start: { lt: slotEnd },
+              end: { gt: slotStart },
+              status: { in: ['PENDING', 'CONFIRMED'] },
+            },
+          });
+          hasHall = clash === 0;
+          hallPick = hasHall ? hallId : null;
+        } else {
+          hallPick = await pickFirstFreeHall(slotStart, slotEnd);
+          hasHall = !!hallPick;
+        }
+      }
+
+      availableByHour[hStart] = hasStaff && hasHall;
+      hallByHour[hStart] = hallPick;
+    }
+
+    return NextResponse.json({
+      hours,
+      remainingByHour,
+      required,
+      availableByHour,
+      hallByHour,
+    });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message ?? 'Unexpected error' },

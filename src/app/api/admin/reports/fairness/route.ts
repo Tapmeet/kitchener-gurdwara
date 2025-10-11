@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   const jatha = (searchParams.get("jatha") ?? "") as Jatha | "";
   const q = searchParams.get("q") ?? "";
 
-  const { rows, windowStart, windowEnd } = await buildFairnessReport({ windowWeeks, role, jatha, q });
+  const { rows } = await buildFairnessReport({ windowWeeks, role, jatha, q });
 
   // Build CSV
   const header = ["Staff","Jatha","Skills","Email","Phone","WindowCredits","LifetimeCredits","TopPrograms(window/total)"];

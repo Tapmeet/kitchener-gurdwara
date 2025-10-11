@@ -36,6 +36,13 @@ enum Jatha {
   B
 }
 
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -53,7 +60,23 @@ model User {
   sessions Session[]
 
   // App relations
-  bookings Booking[] @relation("BookedBy")
+  /**
+   * /**
+   * /**
+   * /**
+   * /** Bookings where this user is the customer/requester
+   */
+  customerBookings Booking[] @relation("CustomerBookings")
+
+  /**
+   * Bookings created (entered) by this user (e.g., admin)
+   */
+  createdBookings Booking[] @relation("CreatedBy")
+
+  /**
+   * Bookings approved by this user (e.g., admin)
+   */
+  approvedBookings Booking[] @relation("ApprovedBy")
 }
 
 model Hall {
@@ -96,25 +119,37 @@ model Booking {
   hallId       String?
   hall         Hall?        @relation(fields: [hallId], references: [id])
 
-  attendees Int @default(1)
-
-  address String?
+  attendees Int     @default(1)
+  address   String?
 
   contactName  String
   contactPhone String
   contactEmail String? @db.VarChar(320)
   notes        String?
 
+  // Who the booking is for (customer/requester)
+  customerId String?
+  customer   User?   @relation("CustomerBookings", fields: [customerId], references: [id])
+
+  // Who created the booking record (often admin)
   createdById String?
-  createdBy   User?   @relation("BookedBy", fields: [createdById], references: [id])
+  createdBy   User?   @relation("CreatedBy", fields: [createdById], references: [id])
+
+  // Who approved the booking (admin)
+  approvedAt   DateTime?
+  approvedById String?
+  approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
 
   items       BookingItem[]
   assignments BookingAssignment[] @relation("BookingAssignments")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  status    BookingStatus @default(PENDING)
 
   @@index([start, end])
+  @@index([status])
+  @@index([hallId])
 }
 
 model BookingItem {

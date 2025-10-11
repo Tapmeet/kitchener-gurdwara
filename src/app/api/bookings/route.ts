@@ -21,8 +21,54 @@ import {
 import { auth } from '@/lib/auth';
 import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
+import { getTotalUniqueStaffCount } from '@/lib/headcount';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+
+// ------------ lightweight rate limit (per-IP) -------------
+const buckets = new Map<string, { count: number; resetAt: number }>();
+function rateLimit(key: string, limit = 10, windowMs = 60_000) {
+  const now = Date.now();
+  const b = buckets.get(key);
+  if (!b || b.resetAt < now) {
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (b.count < limit) {
+    b.count++;
+    return true;
+  }
+  return false;
+}
+
+// ------------ Turnstile server verification ---------------
+async function verifyTurnstile(token: string | null) {
+  // Bypass outside production or when disabled
+  if (process.env.NODE_ENV !== 'production') return true;
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  const disabled =
+    !secret ||
+    ['false', '0', 'off', 'no'].includes(String(secret).toLowerCase());
+  if (disabled) return true;
+  if (!token) return false;
+
+  try {
+    const res = await fetch(
+      'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: `secret=${encodeURIComponent(secret)}&response=${encodeURIComponent(
+          token
+        )}`,
+      }
+    );
+    const json = (await res.json()) as { success?: boolean };
+    return !!json?.success;
+  } catch {
+    return false;
+  }
+}
 
 /** Helpers */
 function toLocalParts(input: Date | string | number) {
@@ -65,6 +111,36 @@ type CreatedBooking = {
 
 export async function POST(req: Request) {
   try {
+    // -------- rate-limit & bot check ----------
+    const ip =
+      (req.headers.get('x-forwarded-for') ?? '').split(',')[0]?.trim() ||
+      'unknown';
+    if (!rateLimit(`book:${ip}`, 10, 60_000)) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
+    // token can be header or in body
+    const cloned = req.clone();
+    const bodyForToken = await cloned.json().catch(() => ({}) as any);
+    const turnstileToken =
+      req.headers.get('x-turnstile-token') ??
+      bodyForToken?.turnstileToken ??
+      null;
+    const botOk = await verifyTurnstile(turnstileToken);
+    if (!botOk) {
+      return NextResponse.json(
+        { error: 'Bot verification failed' },
+        { status: 400 }
+      );
+    }
+
+    // optional origin check
+    const origin = req.headers.get('origin') ?? '';
+    const allowedOrigin = process.env.NEXTAUTH_URL ?? '';
+    if (allowedOrigin && origin && !origin.startsWith(allowedOrigin)) {
+      return NextResponse.json({ error: 'Invalid origin' }, { status: 400 });
+    }
+
     // session (best-effort)
     let session: any | null = null;
     try {
@@ -74,7 +150,10 @@ export async function POST(req: Request) {
     }
 
     // validate
-    const body = await req.json();
+    const body =
+      bodyForToken && Object.keys(bodyForToken).length
+        ? bodyForToken
+        : await req.json();
     const parsed = CreateBookingSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -121,7 +200,6 @@ export async function POST(req: Request) {
         minKirtanis: true,
         canBeOutsideGurdwara: true,
         requiresHall: true,
-        // If reqFromProgram uses peopleRequired, include it here:
         peopleRequired: true,
       },
     });
@@ -147,6 +225,16 @@ export async function POST(req: Request) {
       (acc, p) => add(acc, reqFromProgram(p as any)),
       { PATH: 0, KIRTAN: 0 }
     );
+
+    // Headcount required (sum over items)
+    const headcountRequired = programs
+      .map((p) =>
+        Math.max(
+          p.peopleRequired ?? 0,
+          (p.minPathers ?? 0) + (p.minKirtanis ?? 0)
+        )
+      )
+      .reduce((a, b) => a + b, 0);
 
     // ————— Per-hall selection (Small → Main → Upper) —————
     let hallId: string | null = null;
@@ -199,6 +287,7 @@ export async function POST(req: Request) {
             hallId: hall.id,
             start: { lt: end },
             end: { gt: start },
+            status: { in: ['PENDING', 'CONFIRMED'] },
           },
         });
 
@@ -243,7 +332,11 @@ export async function POST(req: Request) {
     const created: CreatedBooking = await prisma.$transaction(async (tx) => {
       // Build used-per-hour per location from overlaps (with outside buffer)
       const overlaps = await tx.booking.findMany({
-        where: { start: { lte: candEnd }, end: { gte: candStart } },
+        where: {
+          start: { lt: candEnd },
+          end: { gt: candStart },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
         include: {
           items: {
             include: {
@@ -265,12 +358,26 @@ export async function POST(req: Request) {
         usedGW[h] = { PATH: 0, KIRTAN: 0 };
         usedOUT[h] = { PATH: 0, KIRTAN: 0 };
       }
+      const usedHeadGW: Record<number, number> = {};
+      const usedHeadOUT: Record<number, number> = {};
+      for (const h of BUSINESS_HOURS_24) {
+        usedHeadGW[h] = 0;
+        usedHeadOUT[h] = 0;
+      }
 
       for (const b of overlaps) {
         const vec = b.items.reduce(
           (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
           { PATH: 0, KIRTAN: 0 }
         );
+        const headForBooking = b.items
+          .map((it: any) => {
+            const pt: any = it.programType;
+            const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+            return Math.max(pt.peopleRequired ?? 0, minSum);
+          })
+          .reduce((a: number, b: number) => a + b, 0);
+
         const s = new Date(b.start);
         const e = new Date(b.end);
         const paddedStart =
@@ -288,14 +395,17 @@ export async function POST(req: Request) {
           if (b.locationType === 'GURDWARA') {
             usedGW[h].PATH += vec.PATH ?? 0;
             usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
+            usedHeadGW[h] += headForBooking;
           } else {
             usedOUT[h].PATH += vec.PATH ?? 0;
             usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
+            usedHeadOUT[h] += headForBooking;
           }
         }
       }
 
       // Pools & per-location limits
+      const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
       const totalPool = await getTotalPoolPerRole(); // total active staff by role
       const locMax = getMaxPerLocationPerRole(input.locationType);
 
@@ -312,18 +422,29 @@ export async function POST(req: Request) {
               ? (usedGW[h][r] ?? 0)
               : (usedOUT[h][r] ?? 0);
 
-          // Can't exceed the staff not already used in the opposite location
+          // Shared pool vs per-location cap
           const sharedLimit = Math.max(0, total - usedOpp);
-          // And also obey per-location cap
           const locLimit = Math.min(
             sharedLimit,
-            locMax[r] ?? Number.MAX_SAFE_INTEGER
+            (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
           );
 
           const remaining = Math.max(0, locLimit - usedHere);
           const need = (required[r] ?? 0) as number;
           if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
         }
+
+        // Headcount guard
+        const usedOppHead =
+          input.locationType === 'GURDWARA' ? usedHeadOUT[h] : usedHeadGW[h];
+        const usedHereHead =
+          input.locationType === 'GURDWARA' ? usedHeadGW[h] : usedHeadOUT[h];
+        const remainingHead = Math.max(
+          0,
+          totalUniqueStaff - usedOppHead - usedHereHead
+        );
+        if (remainingHead < headcountRequired)
+          throw new Error('CAPACITY_EXCEEDED');
       }
 
       const createdRaw = await tx.booking.create({
@@ -346,6 +467,7 @@ export async function POST(req: Request) {
               ? Math.max(1, input.attendees)
               : 1,
           createdById: session?.user?.id ?? null,
+          status: 'PENDING',
           items: {
             create: input.items.map((i: any) => ({
               programTypeId: i.programTypeId,
@@ -373,7 +495,7 @@ export async function POST(req: Request) {
       return normalized;
     });
 
-    // Auto-assign + staff notify (best-effort)
+    // Auto-assign if enabled (you can keep this off and assign on approval instead)
     if (process.env.AUTO_ASSIGN_ENABLED === '1') {
       try {
         const res = await autoAssignForBooking(created.id);
@@ -435,14 +557,14 @@ export async function POST(req: Request) {
       adminRecipients.length
         ? sendEmail({
             to: adminRecipients,
-            subject: 'New Path/Kirtan Booking',
+            subject: 'New Path/Kirtan Booking (Pending Approval)',
             html: adminHtml,
           })
         : Promise.resolve(),
       customerEmail
         ? sendEmail({
             to: customerEmail,
-            subject: 'Your booking was received',
+            subject: 'Thanks! Your booking was received (Pending Approval)',
             html: customerHtml,
           })
         : Promise.resolve(),
@@ -451,13 +573,16 @@ export async function POST(req: Request) {
         : Promise.resolve(),
     ]);
 
-    return NextResponse.json({ id: created.id }, { status: 201 });
+    return NextResponse.json(
+      { id: created.id, status: 'PENDING' },
+      { status: 201 }
+    );
   } catch (e: any) {
     if (String(e?.message) === 'CAPACITY_EXCEEDED') {
       return NextResponse.json(
         {
           error:
-            'Not enough sevadars available for one or more roles at the selected time.',
+            'Not enough sevadars available for the selected time (role minimums or total headcount).',
         },
         { status: 409 }
       );
