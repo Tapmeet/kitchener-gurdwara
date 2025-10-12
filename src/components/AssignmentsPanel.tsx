@@ -54,7 +54,7 @@ export default function AssignmentsPanel({ bookingId }: { bookingId: string }) {
 
   return (
     <div className='space-y-4'>
-      <h2 className='text-lg font-semibold'>Assignments</h2>
+      <h1 className='text-lg font-semibold'>Assignments</h1>
       <button
         onClick={autoAssign}
         disabled={posting}

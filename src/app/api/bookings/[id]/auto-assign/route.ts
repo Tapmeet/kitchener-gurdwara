@@ -1,17 +1,19 @@
-import { checkStaffCapacity } from '@/lib/staff-capacity';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
+// import { checkStaffCapacity } from '@/lib/staff-capacity'; // (optional) remove if unused
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
-  const id = params.id;
+  const { id } = await ctx.params;
+
   const booking = await prisma.booking.findUnique({ where: { id } });
-  if (!booking)
+  if (!booking) {
     return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+  }
 
   try {
     const res = await autoAssignForBooking(id);

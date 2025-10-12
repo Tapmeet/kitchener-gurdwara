@@ -34,6 +34,12 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
+        assignments: {
+          include: {
+            staff: true,
+            bookingItem: { include: { programType: true } },
+          },
+        },
       },
     }),
     prisma.booking.findMany({
@@ -43,6 +49,12 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
+        assignments: {
+          include: {
+            staff: true,
+            bookingItem: { include: { programType: true } },
+          },
+        },
       },
     }),
   ]);
@@ -78,6 +90,15 @@ export default async function AdminBookingsPage() {
                     Programs:{' '}
                     {b.items.map((i) => i.programType.name).join(', ')}
                   </div>
+                  {b.assignments?.length ? (
+                    <div className='text-xs text-gray-700 mt-1'>
+                      Staff:{' '}
+                      {b.assignments
+                        .map((a) => a.staff?.name)
+                        .filter(Boolean)
+                        .join(', ')}
+                    </div>
+                  ) : null}
                 </div>
                 <div className='md:w-[240px]'>
                   <ApproveButtons id={b.id} />
@@ -106,6 +127,15 @@ export default async function AdminBookingsPage() {
                 <div className='text-xs text-gray-500 mt-1'>
                   Programs: {b.items.map((i) => i.programType.name).join(', ')}
                 </div>
+                {b.assignments?.length ? (
+                  <div className='text-xs text-gray-700 mt-1'>
+                    Staff:{' '}
+                    {b.assignments
+                      .map((a) => a.staff?.name)
+                      .filter(Boolean)
+                      .join(', ')}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

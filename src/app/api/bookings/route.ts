@@ -736,3 +736,42 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
   }
 }
+
+export async function GET(req: Request) {
+  const session = await auth();
+  const role = (session?.user as any)?.role;
+  const isAdmin = role === 'ADMIN';
+
+  const url = new URL(req.url);
+  const status = url.searchParams.get('status'); // e.g. PENDING | CONFIRMED
+  const from = url.searchParams.get('from'); // ISO date
+  const to = url.searchParams.get('to'); // ISO date
+
+  const where: any = {};
+  if (status) where.status = status;
+  if (!isAdmin && !status) where.status = 'CONFIRMED';
+
+  if (from || to) {
+    where.start = {};
+    if (from) where.start.gte = new Date(from);
+    if (to) where.start.lte = new Date(to);
+  }
+
+  const data = await prisma.booking.findMany({
+    where,
+    orderBy: { start: 'desc' },
+    take: isAdmin ? 100 : 50,
+    include: {
+      hall: true,
+      items: { include: { programType: true } },
+      assignments: {
+        include: {
+          staff: true,
+          bookingItem: { include: { programType: true } },
+        },
+      },
+    },
+  });
+
+  return NextResponse.json(data);
+}
