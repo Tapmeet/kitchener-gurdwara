@@ -61,16 +61,6 @@ model User {
 
   // App relations
   /**
-   * /**
-   * /**
-   * /**
-   * /**
-   * /**
-   * /** Bookings where this user is the customer/requester
-   */
-  customerBookings Booking[] @relation("CustomerBookings")
-
-  /**
    * Bookings created (entered) by this user (e.g., admin)
    */
   createdBookings Booking[] @relation("CreatedBy")
@@ -133,10 +123,6 @@ model Booking {
   contactPhone String
   contactEmail String? @db.VarChar(320)
   notes        String?
-
-  // Who the booking is for (customer/requester)
-  customerId String?
-  customer   User?   @relation("CustomerBookings", fields: [customerId], references: [id])
 
   // Who created the booking record (often admin)
   createdById String?
