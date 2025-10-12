@@ -6,6 +6,8 @@ import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { formatPhoneLive, toE164Generic } from '@/lib/phone';
 
+const MAX_ATTENDEES = Number(process.env.NEXT_PUBLIC_MAX_ATTENDEES ?? 300);
+
 /* ---------- types ---------- */
 type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
 type ProgramCategory = 'KIRTAN' | 'PATH' | 'OTHER';
@@ -417,6 +419,8 @@ export default function BookingForm() {
 
     if (!attendees || Number(attendees) < 1) {
       nextErrors.attendees = FRIENDLY.attendees;
+    } else if (Number(attendees) > MAX_ATTENDEES) {
+      nextErrors.attendees = `Maximum ${MAX_ATTENDEES} attendees allowed.`;
     }
 
     const contactEmailRaw = String(fd.get('contactEmail') || '').trim();
@@ -626,6 +630,7 @@ export default function BookingForm() {
                   className={`input ${errors.attendees ? invalidCls : ''}`}
                   type='number'
                   min={1}
+                  max={MAX_ATTENDEES}
                   value={attendees}
                   onChange={(e) => {
                     setAttendees(e.target.value);

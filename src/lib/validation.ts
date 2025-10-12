@@ -1,6 +1,8 @@
 // lib/validation.ts
 import { z } from 'zod';
 
+const MAX_ATTENDEES = Number(process.env.MAX_ATTENDEES ?? 300);
+
 export const BookingItemSchema = z.object({
   programTypeId: z.string().min(1, 'Program is required'),
 });
@@ -11,7 +13,7 @@ export const CreateBookingSchema = z.object({
   end: z.string().datetime().optional(),
   locationType: z.enum(['GURDWARA', 'OUTSIDE_GURDWARA']),
   hallId: z.string().optional().nullable(),
-  attendees: z.number().int().min(1).max(10000).optional(),
+  attendees: z.number().int().min(1).max(MAX_ATTENDEES),
   address: z.string().optional().nullable(),
 
   contactName: z.string().min(2, 'Contact name is required'),
