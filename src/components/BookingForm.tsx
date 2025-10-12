@@ -669,14 +669,14 @@ export default function BookingForm() {
                 approved.
               </div>
             )}
-            <div className='grid md:grid-cols-3 gap-3'>
+            <div className='grid md:grid-cols-3 gap-3 items-stretch'>
               {programTypes.map((pt, idx) => {
                 const checked = selectedProgramId === pt.id;
                 const radioErr = Boolean(errors.programType);
                 return (
                   <label
                     key={pt.id}
-                    className={`flex items-center gap-2 rounded-xl border p-3 hover:bg-black/5 ${radioErr ? 'border-red-500' : 'border-black/10'}`}
+                    className={`flex h-full w-full items-start gap-2 rounded-xl border p-3 hover:bg-black/5 ${radioErr ? 'border-red-500' : 'border-black/10'}`}
                   >
                     <input
                       type='radio'
@@ -688,14 +688,11 @@ export default function BookingForm() {
                         setSelectedProgramId(pt.id);
                         clearFieldError('programType');
                       }}
-                      aria-invalid={radioErr}
-                      aria-describedby={
-                        radioErr ? 'err-programType' : undefined
-                      }
+                      className='mt-0.5'
                     />
-                    <span className='text-sm'>
+                    <span className='text-sm leading-snug'>
                       {pt.name}{' '}
-                      <span className='text-xs text-gray-500'>
+                      <span className='block text-xs text-gray-500'>
                         ({pt.category} •{' '}
                         {Math.ceil((pt.durationMinutes || 0) / 60)}h)
                       </span>
