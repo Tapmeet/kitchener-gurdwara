@@ -6,23 +6,31 @@ import {
   endOfWeek,
   parseISO,
   isValid,
-  format,
   addMonths,
+  eachMonthOfInterval,
   startOfMonth,
   endOfMonth,
-  eachMonthOfInterval,
 } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 import Link from 'next/link';
 
 // ---------- types ----------
 type Role = 'PATH' | 'KIRTAN';
 type Jatha = 'A' | 'B';
 
-async function fmtDate(d: Date) {
+// Use one deterministic timezone everywhere we render dates
+const TZ = process.env.NEXT_PUBLIC_TIMEZONE || 'America/Toronto';
+
+// Stable formatter for any Date/string/number
+function fmtDate(
+  d: Date | string | number,
+  pattern = 'EEE, MMM d yyyy, h:mm a'
+) {
   try {
-    return format(d, 'EEE, MMM d yyyy, h:mm a');
+    const date = d instanceof Date ? d : new Date(d);
+    return formatInTimeZone(date, TZ, pattern);
   } catch {
-    return d.toString();
+    return new Date(d as any).toString();
   }
 }
 
@@ -76,7 +84,7 @@ export default async function Page({
   const months = clamp(Number.isFinite(monthsParam) ? monthsParam : 3, 1, 6);
 
   const rangeStart = base; // inclusive
-  const rangeEnd = endOfWeek(addMonths(base, months), { weekStartsOn: 1 }); // inclusive end of the final week in window
+  const rangeEnd = endOfWeek(addMonths(base, months), { weekStartsOn: 1 }); // inclusive end of final week
 
   // --- Filters ---
   const role = (typeof params?.role === 'string' ? params?.role : '') as
@@ -153,14 +161,14 @@ export default async function Page({
     end: rangeEnd,
   });
 
-  const rangeLabel = `${format(rangeStart, 'MMM d, yyyy')} – ${format(
+  const rangeLabel = `${fmtDate(rangeStart, 'MMM d, yyyy')} – ${fmtDate(
     rangeEnd,
     'MMM d, yyyy'
   )}`;
 
   // Prev/Next navigation jumps by the selected number of months
-  const prevFrom = format(addMonths(rangeStart, -months), 'yyyy-MM-dd');
-  const nextFrom = format(addMonths(rangeStart, months), 'yyyy-MM-dd');
+  const prevFrom = fmtDate(addMonths(rangeStart, -months), 'yyyy-MM-dd');
+  const nextFrom = fmtDate(addMonths(rangeStart, months), 'yyyy-MM-dd');
 
   return (
     <div className='p-6 space-y-6'>
@@ -177,7 +185,7 @@ export default async function Page({
             type='date'
             name='from'
             className='border rounded px-2 py-1 text-sm'
-            defaultValue={format(rangeStart, 'yyyy-MM-dd')}
+            defaultValue={fmtDate(rangeStart, 'yyyy-MM-dd')}
             aria-label='From'
           />
           <select
@@ -308,9 +316,9 @@ export default async function Page({
                     {monthSections.map(({ month, items }) => {
                       if (!items.length) return null;
                       return (
-                        <div key={month.toISOString()} className=''>
+                        <div key={month.toISOString()}>
                           <div className='text-xs font-semibold text-gray-700 mb-1'>
-                            {format(month, 'MMMM yyyy')}
+                            {fmtDate(month, 'MMMM yyyy')}
                           </div>
                           <ul className='space-y-2'>
                             {items.map((a) => {

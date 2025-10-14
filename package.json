@@ -39,6 +39,7 @@
     "@vercel/speed-insights": "^1.2.0",
     "bcrypt": "^6.0.0",
     "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "libphonenumber-js": "^1.12.23",
     "next": "15.5.3",
     "next-auth": "^4.24.11",
