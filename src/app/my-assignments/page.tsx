@@ -112,7 +112,7 @@ export default async function MyAssignmentsPage() {
             <li key={a.id} className='rounded-xl border p-4'>
               <div className='text-base font-medium'>{b.title}</div>
               <div className='text-sm text-gray-600'>
-                {fmt(b.start)} – {fmt(b.end)}
+                {fmt(a.start ?? b.start)} – {fmt(a.end ?? b.end)}
               </div>
               <div className='text-sm'>{loc}</div>
               <div className='mt-1 text-sm'>

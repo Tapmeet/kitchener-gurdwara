@@ -245,108 +245,125 @@ async function main() {
     email: 'sevadar6@example.com',
   });
 
-  // Programs
-
-  // Sukhmani Sahib Path + Kirtan (1.5h total: 0.5–1h path + 1h kirtan at end)
+  // Sukhmani Sahib Path + Kirtan (total 2.5h; Path 1.5h then Kirtan 1h)
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 90,
-    peopleRequired: 1, // path is one at a time
+    durationMinutes: 150,
+    // Max concurrent heads: Kirtan window (3), not sum across windows
+    peopleRequired: 3,
     minPathers: 1,
-    minKirtanis: 0, // jatha only at end
-    compWeight: 3,
-    requiresHall: false,
-    canBeOutsideGurdwara: true,
-    trailingKirtanMinutes: 60,
+    // Kirtan only at the end -> minKirtanis stays 0; trailing drives the jatha
+    minKirtanis: 0,
+    trailingKirtanMinutes: 60, // last 60 min is Kirtan
     pathRotationMinutes: 0,
     pathClosingDoubleMinutes: 0,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    compWeight: 3,
   });
 
-  // Sukhmani Sahib Path (no trailing kirtan)
+  // Sukhmani Sahib Path (Path only, 1.5h)
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
     durationMinutes: 90,
     peopleRequired: 1,
     minPathers: 1,
     minKirtanis: 0,
-    compWeight: 2,
+    trailingKirtanMinutes: 0,
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
     requiresHall: false,
     canBeOutsideGurdwara: true,
+    compWeight: 2,
   });
 
-  // Anand Karaj (concurrent path + kirtan throughout, hall-only)
+  // Anand Karaj (Path + Kirtan concurrent full window, e.g., 3h)
   await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
     durationMinutes: 180,
+    // Full-window Kirtan jatha (3) + 1 pathi concurrently => 4 heads
     peopleRequired: 4,
     minPathers: 1,
-    minKirtanis: 3, // full jatha all through
-    compWeight: 4,
-    requiresHall: true,
-    canBeOutsideGurdwara: false,
-  });
-
-  // Akhand Path + Kirtan (49h total; path rotations + closing double + 1h kirtan at end)
-  await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 49 * 60,
-    peopleRequired: 5, // overall crew size
-    minPathers: 1, // at least 1 on-duty at any moment (except closing double)
-    minKirtanis: 0, // jatha only at the end
-    compWeight: 6,
+    minKirtanis: 3, // full-window Kirtan
+    trailingKirtanMinutes: 0, // not trailing; it's the whole time
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
     requiresHall: false,
-    canBeOutsideGurdwara: true,
-    trailingKirtanMinutes: 60, // bhog kirtan
-    pathRotationMinutes: 120, // 2h shifts
-    pathClosingDoubleMinutes: 60, // last 1h uses 2 pathis
+    canBeOutsideGurdwara: false, // typically inside
+    compWeight: 4,
   });
 
-  // Alania Da Path (Antim Ardas) + Kirtan (2h total, kirtan at end)
+  // Alania Da Path (Antim Ardas) + Kirtan (2h total; Path 1h → Kirtan 1h)
   await upsertProgram(
     'Alania Da Path (Antim Ardas) + Kirtan',
     ProgramCategory.PATH,
     {
       durationMinutes: 120,
-      peopleRequired: 1,
+      peopleRequired: 3, // Kirtan window max
       minPathers: 1,
-      minKirtanis: 0,
-      compWeight: 3,
+      minKirtanis: 0, // trailing drives the jatha
+      trailingKirtanMinutes: 60, // last 60 min is Kirtan
+      pathRotationMinutes: 0,
+      pathClosingDoubleMinutes: 0,
       requiresHall: false,
       canBeOutsideGurdwara: true,
-      trailingKirtanMinutes: 60,
+      compWeight: 3,
     }
   );
 
-  // Assa Di War (pure kirtan)
+  // Assa Di War (3h Kirtan only)
   await upsertProgram('Assa Di War', ProgramCategory.KIRTAN, {
     durationMinutes: 180,
     peopleRequired: 3,
     minPathers: 0,
-    minKirtanis: 3,
-    compWeight: 4,
+    minKirtanis: 3, // full-window Kirtan
+    trailingKirtanMinutes: 0,
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
     requiresHall: false,
     canBeOutsideGurdwara: true,
+    compWeight: 4,
   });
 
-  // Kirtan (pure kirtan, 1h)
+  // Kirtan (1h Kirtan only)
   await upsertProgram('Kirtan', ProgramCategory.KIRTAN, {
     durationMinutes: 60,
     peopleRequired: 3,
     minPathers: 0,
-    minKirtanis: 3,
-    compWeight: 1,
+    minKirtanis: 3, // full-window Kirtan
+    trailingKirtanMinutes: 0,
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
     requiresHall: false,
     canBeOutsideGurdwara: true,
+    compWeight: 1,
   });
 
-  // Akhand Path (48h PATH only; rotations + closing double)
-  await upsertProgram('Akhand Path', ProgramCategory.PATH, {
-    durationMinutes: 48 * 60,
-    peopleRequired: 5, // <-- set to 5
+  /* Optional: Akhand variants (operate differently via rotations) */
+
+  // Akhand Path + Kirtan (48h Path with rotations + closing double; last 1h Kirtan)
+  await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
+    durationMinutes: 49 * 60, // 48h path + 1h kirtan tail
+    peopleRequired: 5, // not used for FLEX here, but ok to keep high
     minPathers: 1,
-    minKirtanis: 0,
-    compWeight: 5,
+    minKirtanis: 0, // trailing drives the jatha
+    trailingKirtanMinutes: 60, // last 60 min is Kirtan
+    pathRotationMinutes: 120, // 2h rotations
+    pathClosingDoubleMinutes: 60, // last hour 2x pathis
     requiresHall: false,
     canBeOutsideGurdwara: true,
+    compWeight: 6,
+  });
+
+  // Akhand Path (48h Path only, rotations + closing double)
+  await upsertProgram('Akhand Path', ProgramCategory.PATH, {
+    durationMinutes: 48 * 60,
+    peopleRequired: 5,
+    minPathers: 1,
+    minKirtanis: 0,
     trailingKirtanMinutes: 0,
-    pathRotationMinutes: 120, // 2h shifts
-    pathClosingDoubleMinutes: 60, // last 1h uses 2 pathis
+    pathRotationMinutes: 120,
+    pathClosingDoubleMinutes: 60,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    compWeight: 5,
   });
 
   console.log('✅ Seed completed');
