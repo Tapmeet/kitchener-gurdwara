@@ -4,7 +4,7 @@ import { auth } from '@/lib/auth';
 import Link from 'next/link';
 
 function isPriv(role?: string | null) {
-  return role === "ADMIN";
+  return role === 'ADMIN';
 }
 
 export default async function Page() {
@@ -35,7 +35,7 @@ export default async function Page() {
           href='/admin/schedule'
           className='text-sm underline hover:no-underline'
         >
-          Weekly Schedule →
+          Monthly Schedule →
         </Link>
       </div>
       <table className='w-full text-sm border rounded-xl overflow-hidden'>

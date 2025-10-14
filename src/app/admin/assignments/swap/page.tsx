@@ -20,7 +20,7 @@ export default async function Page() {
         <h1 className="text-xl font-semibold">Swap Assignments</h1>
         <div className="flex gap-3">
           <Link href="/admin/staff" className="text-sm underline hover:no-underline">Staff Overview</Link>
-          <Link href="/admin/schedule" className="text-sm underline hover:no-underline">Weekly Schedule</Link>
+          <Link href="/admin/schedule" className="text-sm underline hover:no-underline">Monthly Schedule</Link>
         </div>
       </div>
 
