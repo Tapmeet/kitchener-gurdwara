@@ -109,6 +109,9 @@ export default function NavBar() {
             {canSeeMySchedule && (
               <ActiveLink href='/my-assignments'>My Schedule</ActiveLink>
             )}
+            {isAuthenticated && (
+              <ActiveLink href='/my-bookings'>My Bookings</ActiveLink>
+            )}
 
             {!isAuthenticated ? (
               <button
@@ -172,6 +175,11 @@ export default function NavBar() {
               <ActiveLink href='/book' onClick={() => setOpen(false)}>
                 Book
               </ActiveLink>
+              {isAuthenticated && (
+                <ActiveLink href='/my-bookings' onClick={() => setOpen(false)}>
+                  My Bookings
+                </ActiveLink>
+              )}
               {canSeeMySchedule && (
                 <ActiveLink
                   href='/my-assignments'
