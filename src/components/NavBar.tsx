@@ -3,21 +3,9 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { useSession, signIn, signOut } from 'next-auth/react';
 
 type Role = 'ADMIN' | 'STAFF' | 'LANGRI' | 'VIEWER' | (string & {});
-
-type UserMeta = {
-  name?: string | null;
-  email?: string | null;
-  image?: string | null;
-  role?: Role | null;
-};
-
-type Props = {
-  user: UserMeta | null;
-  isAuthenticated: boolean;
-  isPrivileged: boolean; // ADMIN or SECRETARY (computed server-side)
-};
 
 function ActiveLink({
   href,
@@ -54,11 +42,14 @@ function ActiveLink({
   );
 }
 
-export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
+export default function NavBar() {
+  const { data: session, status } = useSession();
+  const isAuthenticated = status === 'authenticated';
+  const role = ((session?.user as any)?.role ?? 'VIEWER') as Role;
+
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Close mobile menu on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false);
@@ -67,28 +58,26 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Close when clicking outside
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (!open) return;
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node))
         setOpen(false);
-      }
     }
     window.addEventListener('mousedown', onClick);
     return () => window.removeEventListener('mousedown', onClick);
   }, [open]);
 
   const displayName =
-    user?.name || user?.email || (isAuthenticated ? 'User' : 'Guest');
+    session?.user?.name ||
+    session?.user?.email ||
+    (isAuthenticated ? 'User' : 'Guest');
 
-  const role = (user?.role ?? 'VIEWER') as Role;
   const canSeeMySchedule =
     isAuthenticated && (role === 'STAFF' || role === 'LANGRI');
 
   return (
     <header className='sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/10 bg-gradient-to-br from-blue-600 to-indigo-600 text-white border-b border-white/15'>
-      {/* Skip link */}
       <a
         href='#main-content'
         className='sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 bg-white text-blue-700 rounded px-3 py-1 text-sm shadow'
@@ -98,7 +87,6 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
 
       <div className='container mx-auto px-4 py-4'>
         <div className='flex items-center justify-between gap-4'>
-          {/* Brand */}
           <Link href='/' className='group inline-flex items-center gap-3'>
             <div>
               <h1 className='text-xl md:text-2xl font-bold tracking-tight'>
@@ -118,37 +106,28 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
           >
             <ActiveLink href='/'>Calendar</ActiveLink>
             <ActiveLink href='/book'>Book</ActiveLink>
-
             {canSeeMySchedule && (
-              <ActiveLink href={'/my-assignments'}>My Schedule</ActiveLink>
+              <ActiveLink href='/my-assignments'>My Schedule</ActiveLink>
             )}
 
             {!isAuthenticated ? (
-              <Link
-                href={`/login?callbackUrl=${encodeURIComponent('/')}`}
+              <button
+                onClick={() => signIn(undefined, { callbackUrl: '/' })}
                 className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white text-blue-700 hover:bg-white/90'
               >
                 Login
-              </Link>
+              </button>
             ) : (
               <>
                 <span className='mx-1 text-white/90 hidden lg:inline'>
                   {displayName}
                 </span>
-                {/* Sign out (POST form for NextAuth) */}
-                <form
-                  action='/api/auth/signout'
-                  method='post'
-                  className='inline'
+                <button
+                  onClick={() => signOut({ callbackUrl: '/' })}
+                  className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg.white/20 border border-white/20'
                 >
-                  <input type='hidden' name='callbackUrl' value='/' />
-                  <button
-                    type='submit'
-                    className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20 border border-white/20'
-                  >
-                    Sign out
-                  </button>
-                </form>
+                  Sign out
+                </button>
               </>
             )}
           </nav>
@@ -162,7 +141,6 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
               onClick={() => setOpen((v) => !v)}
               className='inline-flex items-center justify-center rounded-lg p-2 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/40'
             >
-              {/* hamburger */}
               <svg
                 width='22'
                 height='22'
@@ -194,38 +172,37 @@ export default function NavBar({ user, isAuthenticated, isPrivileged }: Props) {
               <ActiveLink href='/book' onClick={() => setOpen(false)}>
                 Book
               </ActiveLink>
-
               {canSeeMySchedule && (
                 <ActiveLink
-                  href={'/my-assignments'}
+                  href='/my-assignments'
                   onClick={() => setOpen(false)}
                 >
                   My Schedule
                 </ActiveLink>
               )}
-
               <div className='my-2 border-t border-white/15' />
-
               {!isAuthenticated ? (
-                <Link
-                  href={`/login?callbackUrl=${encodeURIComponent('/')}`}
-                  onClick={() => setOpen(false)}
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    signIn(undefined, { callbackUrl: '/' });
+                  }}
                   className='px-3 py-2 rounded-lg text-sm font-medium bg-white text-blue-700 hover:bg-white/90'
                 >
                   Login
-                </Link>
+                </button>
               ) : (
                 <div className='flex items-center justify-between px-1 py-1.5'>
                   <span className='text-white/90'>{displayName}</span>
-                  <form action='/api/auth/signout' method='post'>
-                    <input type='hidden' name='callbackUrl' value='/' />
-                    <button
-                      type='submit'
-                      className='px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20 border border-white/20'
-                    >
-                      Sign out
-                    </button>
-                  </form>
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      signOut({ callbackUrl: '/' });
+                    }}
+                    className='px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20 border border-white/20'
+                  >
+                    Sign out
+                  </button>
                 </div>
               )}
             </div>
