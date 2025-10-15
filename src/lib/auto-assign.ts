@@ -150,13 +150,24 @@ export async function autoAssignForBooking(
     const end = booking.end;
 
     // --------------------------
-    // STRICT AKHAND (fixed team of 4 rotating across full window)
+    // STRICT AKHAND (fixed team, rotations, closing double, trailing Kirtan)
     // --------------------------
     const isAkhand = pt.name.toLowerCase().includes('akhand');
     if (isAkhand) {
-      const rot = Math.max(60, pt.pathRotationMinutes || 60); // default to 60m rotation if unset
+      // rotation length (fallback 60m)
+      const rot = Math.max(60, pt.pathRotationMinutes || 60);
 
-      // Pick a jatha that can field ≥3 Kirtanis
+      // windows
+      const tk = Math.max(0, pt.trailingKirtanMinutes ?? 0); // trailing Kirtan minutes
+      const pathEnd = tk > 0 ? new Date(end.getTime() - tk * 60_000) : end;
+
+      const closingMinutes = Math.max(0, pt.pathClosingDoubleMinutes ?? 0);
+      const closingStart =
+        closingMinutes > 0
+          ? new Date(pathEnd.getTime() - closingMinutes * 60_000)
+          : pathEnd;
+
+      // jatha for Kirtan (and can help PATH rotations)
       const { jatha, memberIds } = await pickJathaForWindow(start, end);
       if (!jatha || memberIds.length < JATHA_SIZE) {
         shortages.push({
@@ -171,7 +182,7 @@ export async function autoAssignForBooking(
         JATHA_SIZE
       );
 
-      // Pathi: prefer PATH-only; if none, borrow PATH-capable from same jatha
+      // pathi: prefer PATH-only; if none available, borrow PATH-capable from same jatha
       const pathOnly = await availablePathOnly(start, end);
       const pathiFromOnly = (
         await orderByWeightedLoad(
@@ -189,26 +200,58 @@ export async function autoAssignForBooking(
         continue;
       }
 
-      const team = [pathi, ...orderedJ]; // exactly 4 people total
+      // Fixed team of 4 for rotations
+      const team = [pathi, ...orderedJ];
 
-      // Rotate the team across the whole window in 'rot' minute slices
+      // 1) PATH rotations from [start, closingStart)
       let cursor = new Date(start);
       let idx = 0;
-      while (cursor < end) {
+      while (cursor < closingStart) {
         const slotEnd = new Date(
-          Math.min(end.getTime(), cursor.getTime() + rot * 60_000)
+          Math.min(closingStart.getTime(), cursor.getTime() + rot * 60_000)
         );
-        const staffId = team[idx % team.length];
-        await commit(item.id, [staffId], cursor, slotEnd);
+        const who = team[idx % team.length];
+        await commit(item.id, [who], cursor, slotEnd);
         idx += 1;
         cursor = slotEnd;
       }
 
-      // Optional trailing Kirtan at the end (e.g., "Akhand Path + Kirtan")
-      if ((pt.trailingKirtanMinutes ?? 0) > 0) {
-        const ks = new Date(end.getTime() - pt.trailingKirtanMinutes! * 60_000);
-        await commit(item.id, orderedJ, ks, end);
+      // 2) Closing double PATH: two people on [closingStart, pathEnd)
+      if (closingMinutes > 0 && closingStart < pathEnd) {
+        // make sure they are distinct
+        const secondPref = orderedJ[0];
+        const second =
+          secondPref && secondPref !== pathi
+            ? secondPref
+            : (orderedJ[1] ?? team[1]);
+        const closingPair = [pathi, second].filter(Boolean) as string[];
+
+        if (closingPair.length < 2) {
+          shortages.push({
+            itemId: item.id,
+            role: 'PATH',
+            needed: 2 - closingPair.length,
+          });
+        } else {
+          await prisma.bookingAssignment.createMany({
+            data: closingPair.map((staffId) => ({
+              bookingId: booking.id,
+              bookingItemId: item.id,
+              staffId,
+              start: closingStart,
+              end: pathEnd,
+              state: 'PROPOSED',
+            })),
+            skipDuplicates: true,
+          });
+        }
       }
+
+      // 3) Trailing Kirtan (if any) on [pathEnd, end)
+      if (tk > 0) {
+        await commit(item.id, orderedJ, pathEnd, end);
+      }
+
       continue; // skip non-Akhand flow
     }
 
