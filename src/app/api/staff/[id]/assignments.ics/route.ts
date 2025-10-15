@@ -2,17 +2,19 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
 function icsDate(d: Date) {
-  // UTC in YYYYMMDDTHHmmssZ
   return d
     .toISOString()
     .replace(/[-:]/g, '')
     .replace(/\.\d+Z$/, 'Z');
 }
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const staffId = params.id;
-  const now = new Date();
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> } // 👈
+) {
+  const { id: staffId } = await ctx.params; // 👈
 
+  const now = new Date();
   const rows = await prisma.bookingAssignment.findMany({
     where: {
       staffId,
@@ -31,7 +33,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
     orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
   });
 
-  const lines: string[] = [
+  const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Kitchener Gurdwara//Assignments//EN',
@@ -44,28 +46,15 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
     const it = a.bookingItem!;
     const start = a.start ?? b.start;
     const end = a.end ?? b.end;
-
-    const uid = `${a.id}@kitchener-gurdwara`;
-    const dtStart = icsDate(start);
-    const dtEnd = icsDate(end);
-    const summary = `${it.programType.name} — ${b.title}`;
-    const location =
-      b.locationType === 'GURDWARA'
-        ? (b as any).hall?.name
-          ? `Gurdwara — ${(b as any).hall?.name}`
-          : 'Gurdwara'
-        : (b.address ?? 'Outside');
-    const desc = `Assigned to: ${a.staff?.name ?? ''}`;
-
     lines.push(
       'BEGIN:VEVENT',
-      `UID:${uid}`,
+      `UID:${a.id}@kitchener-gurdwara`,
       `DTSTAMP:${icsDate(new Date())}`,
-      `DTSTART:${dtStart}`,
-      `DTEND:${dtEnd}`,
-      `SUMMARY:${summary.replace(/\n/g, ' ')}`,
-      `LOCATION:${(location ?? '').replace(/\n/g, ' ')}`,
-      `DESCRIPTION:${desc.replace(/\n/g, ' ')}`,
+      `DTSTART:${icsDate(start)}`,
+      `DTEND:${icsDate(end)}`,
+      `SUMMARY:${(it.programType.name + ' — ' + b.title).replace(/\n/g, ' ')}`,
+      `LOCATION:${(b.locationType === 'GURDWARA' ? ((b as any).hall?.name ? 'Gurdwara — ' + (b as any).hall?.name : 'Gurdwara') : (b.address ?? 'Outside')).replace(/\n/g, ' ')}`,
+      `DESCRIPTION:Assigned to ${a.staff?.name ?? ''}`,
       'END:VEVENT'
     );
   }

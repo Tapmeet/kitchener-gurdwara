@@ -87,6 +87,11 @@ async function pickJathaForWindow(start: Date, end: Date) {
 export async function autoAssignForBooking(
   bookingId: string
 ): Promise<AssignResult> {
+  // clear any earlier proposals for this booking so we don't accumulate people
+  await prisma.bookingAssignment.deleteMany({
+    where: { bookingId, state: 'PROPOSED' },
+  });
+
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
