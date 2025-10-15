@@ -71,12 +71,14 @@ export async function weightedLoadByStaff(
     where: {
       staffId: { in: staffIds },
       OR: [
-        { AND: [{ start: { gte: start } }, { end: { lte: end } }] },
+        // Count any windowed shift that OVERLAPS [start, end)
+        { AND: [{ start: { lt: end } }, { end: { gt: start } }] },
+        // Count unwindowed rows by the booking overlap
         {
           AND: [
             { start: null },
             { end: null },
-            { booking: { start: { gte: start }, end: { lte: end } } },
+            { booking: { start: { lt: end }, end: { gt: start } } },
           ],
         },
       ],
