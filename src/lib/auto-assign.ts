@@ -6,6 +6,7 @@ import {
   orderByWeightedLoad,
   pickJathaForSlot,
   Role,
+  busyStaffIds, // ⬅ NEW: to filter jatha donors by availability
 } from '@/lib/fairness';
 import { JATHA_SIZE } from '@/lib/jatha';
 
@@ -20,6 +21,30 @@ function takeFirst<T>(arr: T[], n: number) {
 }
 function exclude<T>(arr: T[], excludeSet: Set<T>) {
   return arr.filter((x) => !excludeSet.has(x));
+}
+
+// ⬇⬇⬇ NEW: when borrowing PATH from a jatha, require PATH skill (not just Kirtan).
+async function availableJathaPathMembers(
+  jatha: 'A' | 'B',
+  start: Date,
+  end: Date,
+  reserved: Set<string> = new Set<string>()
+): Promise<string[]> {
+  const busy = await busyStaffIds(start, end);
+  const rows = await prisma.staff.findMany({
+    where: {
+      isActive: true,
+      jatha,
+      skills: { has: 'PATH' }, // <- must be able to do PATH
+    },
+    select: { id: true },
+  });
+  const freeIds = rows
+    .map((r) => r.id)
+    .filter((id) => !busy.has(id) && !reserved.has(id));
+  // order by PATH load to keep it fair
+  const ordered = await orderByWeightedLoad(freeIds, 'PATH');
+  return ordered;
 }
 
 async function pickPathersForWindow(
@@ -45,12 +70,8 @@ async function pickPathersForWindow(
   const donor = await pickJathaForSlot(start, end);
   let donorPool: string[] = [];
   if (donor) {
-    const donorAvail = await availableJathaMembers(donor, start, end);
-    const donorOrdered = await orderByWeightedLoad(
-      donorAvail.map((s) => s.id),
-      'PATH'
-    );
-    donorPool = exclude(donorOrdered, reserved);
+    // ⬇⬇⬇ use PATH-capable members of that jatha only
+    donorPool = await availableJathaPathMembers(donor, start, end, reserved);
   }
 
   const pJ = takeFirst(donorPool, remaining);
@@ -97,6 +118,7 @@ export async function autoAssignForBooking(
               trailingKirtanMinutes: true,
               pathRotationMinutes: true,
               pathClosingDoubleMinutes: true,
+              name: true,
             },
           },
         },
@@ -105,17 +127,12 @@ export async function autoAssignForBooking(
   });
   if (!booking) throw new Error('Booking not found');
 
-  // ✅ capture non-null id so nested functions don't see a nullable value
   const thisBookingId: string = booking.id;
-
-  const start = booking.start;
-  const end = booking.end;
 
   const created: AssignResult['created'] = [];
   const shortages: AssignResult['shortages'] = [];
   let pickedJathaOverall: 'A' | 'B' | null = null;
 
-  // Helper to persist assignments (optionally windowed)
   async function commit(
     itemId: string,
     staffIds: string[],
@@ -130,6 +147,7 @@ export async function autoAssignForBooking(
         staffId,
         start: winStart ?? null,
         end: winEnd ?? null,
+        state: 'PROPOSED', 
       })),
       skipDuplicates: true,
     });
@@ -140,6 +158,98 @@ export async function autoAssignForBooking(
 
   for (const item of booking.items) {
     const pt = item.programType;
+    const start = booking.start;
+    const end = booking.end;
+
+    const isAkhand = pt.name.toLowerCase().includes('akhand');
+    if (isAkhand) {
+      // STRICT AKHAND: pick 1 Pathi + 1 Jatha (3) → 4 fixed people total
+      const rot = Math.max(60, pt.pathRotationMinutes || 60); // default 1h
+      const { jatha, memberIds } = await pickJathaForWindow(start, end);
+      if (!jatha || memberIds.length < JATHA_SIZE) {
+        shortages.push({
+          itemId: item.id,
+          role: 'KIRTAN',
+          needed: Math.max(0, JATHA_SIZE - (memberIds.length || 0)),
+        });
+        continue;
+      }
+      const orderedJ = (await orderByWeightedLoad(memberIds, 'KIRTAN')).slice(
+        0,
+        JATHA_SIZE
+      );
+
+      // Prefer a PATH-only granthi; if none, borrow a PATH-capable member from the SAME jatha
+      const pathOnly = await availablePathOnly(start, end);
+      const pathiFromOnly = (
+        await orderByWeightedLoad(
+          pathOnly.map((p) => p.id),
+          'PATH'
+        )
+      )[0];
+
+      let pathi = pathiFromOnly;
+      if (!pathi) {
+        const jathaPath = await availableJathaPathMembers(jatha, start, end);
+        pathi = jathaPath[0]; // still keeps team size 4 max
+      }
+      if (!pathi) {
+        shortages.push({ itemId: item.id, role: 'PATH', needed: 1 });
+        continue;
+      }
+
+      const team = [pathi, ...orderedJ]; // 4 people
+
+      // windowed rotation across the fixed team
+      let cursor = new Date(start);
+      let idx = 0;
+      const batch: {
+        bookingId: string;
+        bookingItemId: string;
+        staffId: string;
+        start: Date;
+        end: Date;
+      }[] = [];
+
+      while (cursor < end) {
+        const slotEnd = new Date(
+          Math.min(end.getTime(), cursor.getTime() + rot * 60_000)
+        );
+        const staffId = team[idx % team.length];
+        batch.push({
+          bookingId: booking.id,
+          bookingItemId: item.id,
+          staffId,
+          start: cursor,
+          end: slotEnd,
+        });
+        idx += 1;
+        cursor = slotEnd;
+      }
+
+      if (batch.length) {
+        await prisma.bookingAssignment.createMany({
+          data: batch,
+          skipDuplicates: true,
+        });
+      }
+
+      // Optional: trailing Kirtan block at the end
+      if ((pt.trailingKirtanMinutes ?? 0) > 0) {
+        const ks = new Date(end.getTime() - pt.trailingKirtanMinutes! * 60_000);
+        await prisma.bookingAssignment.createMany({
+          data: orderedJ.map((s) => ({
+            bookingId: booking.id,
+            bookingItemId: item.id,
+            staffId: s,
+            start: ks,
+            end,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      continue; // skip normal flow
+    }
 
     const minK = Math.max(0, pt.minKirtanis ?? 0);
     const minP = Math.max(0, pt.minPathers ?? 0);
@@ -149,20 +259,14 @@ export async function autoAssignForBooking(
     const rot = Math.max(0, pt.pathRotationMinutes ?? 0);
     const closingDouble = Math.max(0, pt.pathClosingDoubleMinutes ?? 0);
 
-    // Windows
     const kirtanStart = tk > 0 ? new Date(end.getTime() - tk * 60_000) : null;
     const pathEnd = kirtanStart ?? end;
     const pathStart = start;
 
-    // Track concurrent reservations within the same time window to avoid double-picking
-    // (we reset this for non-overlapping windows like rotations).
     const reservedConcurrent = new Set<string>();
 
-    // --------------------------
-    // 1) KIRTAN assignments
-    // --------------------------
+    // 1) KIRTAN
     if (minK > 0 && tk === 0) {
-      // Kirtan throughout the entire item window [start, end] (e.g., Anand Karaj)
       const { jatha, memberIds } = await pickJathaForWindow(start, end);
       if (!jatha || memberIds.length < JATHA_SIZE) {
         shortages.push({
@@ -174,14 +278,12 @@ export async function autoAssignForBooking(
         const jathaOrder = await orderByWeightedLoad(memberIds, 'KIRTAN');
         const picksK = jathaOrder.slice(0, JATHA_SIZE);
         pickedJathaOverall = pickedJathaOverall ?? jatha;
-        // reserve jatha picks against concurrent PATH in the same window
-        picksK.forEach((id) => reservedConcurrent.add(id));
+        picksK.forEach((id) => reservedConcurrent.add(id)); // avoid double-book with PATH
         await commit(item.id, picksK, start, end);
       }
     }
 
     if (tk > 0) {
-      // Kirtan only at the end [kirtanStart, end]
       const ks = kirtanStart!;
       const { jatha, memberIds } = await pickJathaForWindow(ks, end);
       if (!jatha || memberIds.length < JATHA_SIZE) {
@@ -198,13 +300,9 @@ export async function autoAssignForBooking(
       }
     }
 
-    // --------------------------
-    // 2) PATH assignments
-    // --------------------------
+    // 2) PATH
     if (minP > 0) {
-      // Rotation-based PATH body
       if (rot > 0) {
-        // Main rotation region [pathStart, closingStart)
         const closingStart =
           closingDouble > 0
             ? new Date(pathEnd.getTime() - closingDouble * 60_000)
@@ -215,8 +313,6 @@ export async function autoAssignForBooking(
           const slotEnd = new Date(
             Math.min(cursor.getTime() + rot * 60_000, closingStart.getTime())
           );
-
-          // fresh window-local reservations (no need to exclude past slots)
           const localReserved = new Set<string>(reservedConcurrent);
 
           const { picked, shortage } = await pickPathersForWindow(
@@ -226,11 +322,7 @@ export async function autoAssignForBooking(
             localReserved
           );
           if (shortage > 0) {
-            shortages.push({
-              itemId: item.id,
-              role: 'PATH',
-              needed: shortage,
-            });
+            shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
           }
           if (picked.length > 0) {
             await commit(item.id, picked, cursor, slotEnd);
@@ -238,28 +330,22 @@ export async function autoAssignForBooking(
           cursor = slotEnd;
         }
 
-        // Closing double window [closingStart, pathEnd): require 2 pathis
         if (closingDouble > 0 && closingStart < pathEnd) {
-          const needDouble = Math.max(2, minP); // 2 pathis minimum
+          const needDouble = Math.max(2, minP);
           const { picked, shortage } = await pickPathersForWindow(
             closingStart,
             pathEnd,
             needDouble,
-            new Set<string>() // new window
+            new Set<string>()
           );
           if (shortage > 0) {
-            shortages.push({
-              itemId: item.id,
-              role: 'PATH',
-              needed: shortage,
-            });
+            shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
           }
           if (picked.length > 0) {
             await commit(item.id, picked, closingStart, pathEnd);
           }
         }
       } else {
-        // No rotation: assign PATH over the entire path window [pathStart, pathEnd]
         const { picked, shortage } = await pickPathersForWindow(
           pathStart,
           pathEnd,
@@ -267,11 +353,7 @@ export async function autoAssignForBooking(
           reservedConcurrent
         );
         if (shortage > 0) {
-          shortages.push({
-            itemId: item.id,
-            role: 'PATH',
-            needed: shortage,
-          });
+          shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
         }
         if (picked.length > 0) {
           await commit(item.id, picked, pathStart, pathEnd);
@@ -279,11 +361,7 @@ export async function autoAssignForBooking(
       }
     }
 
-    // --------------------------
-    // 3) OPTIONAL FLEX (short slots only)
-    // --------------------------
-    // For very long windows (e.g., 48–49h) we skip trying to fill to `peopleRequired`
-    // to avoid spamming giant assignment sets. Keep FLEX only for short, concurrent items.
+    // 3) FLEX (short slots only)
     const totalMinutes = Math.max(
       0,
       Math.round((end.getTime() - start.getTime()) / 60_000)
@@ -291,9 +369,6 @@ export async function autoAssignForBooking(
     const isShort = totalMinutes <= 240; // <= 4h
 
     if (isShort && ppl > minK + minP && tk === 0 && minK > 0) {
-      // Only consider FLEX when Kirtan runs the whole window (e.g., Anand Karaj).
-      // At this point, K (jatha) has been reserved; add extra helpers up to ppl
-      // without breaking the other jatha.
       const already = await prisma.bookingAssignment.findMany({
         where: { bookingId: thisBookingId, bookingItemId: item.id },
         select: { staffId: true },
@@ -302,7 +377,6 @@ export async function autoAssignForBooking(
       const want = Math.max(0, ppl - have.size);
 
       if (want > 0) {
-        // Prefer PATH-only, then same jatha as the Kirtan
         const pathOnly = await availablePathOnly(start, end);
         const pathOnlyOrdered = await orderByWeightedLoad(
           exclude(
@@ -314,12 +388,9 @@ export async function autoAssignForBooking(
 
         let flexPool = [...pathOnlyOrdered];
 
-        // Try to detect which jatha was used for K
         const kAsns = await prisma.bookingAssignment.findMany({
           where: { bookingId: thisBookingId, bookingItemId: item.id },
-          include: {
-            staff: { select: { jatha: true } },
-          },
+          include: { staff: { select: { jatha: true } } },
         });
         const kJatha =
           kAsns.find((a) => a.staff.jatha != null)?.staff.jatha ?? null;

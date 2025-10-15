@@ -2,15 +2,11 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { format } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 
-function fmt(d: Date) {
-  try {
-    return format(d, 'EEE, MMM d yyyy, h:mm a');
-  } catch {
-    return d.toString();
-  }
-}
+const TZ = process.env.NEXT_PUBLIC_TIMEZONE || 'America/Toronto';
+const fmt = (d: Date | string | number, p = 'EEE, MMM d yyyy, h:mm a') =>
+  formatInTimeZone(d instanceof Date ? d : new Date(d), TZ, p);
 
 export default async function MyAssignmentsPage() {
   const session = await auth();
@@ -65,12 +61,15 @@ export default async function MyAssignmentsPage() {
 
   const now = new Date();
   const assignments = await prisma.bookingAssignment.findMany({
-    where: { staffId: staff.id, booking: { end: { gte: now } } },
+    where: {
+      staffId: staff.id,
+      booking: { status: 'CONFIRMED', end: { gte: now } },
+    },
     include: {
       booking: { include: { hall: true } },
       bookingItem: { include: { programType: true } },
     },
-    orderBy: [{ booking: { start: 'asc' } }],
+    orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
   });
 
   if (!assignments.length) {
@@ -82,7 +81,7 @@ export default async function MyAssignmentsPage() {
       <div className='flex items-center justify-between'>
         <h1 className='text-xl font-semibold'>My Assignments</h1>
         <a
-          href='/api/me/assignments.ics'
+          href={`/api/staff/${staff.id}/assignments.ics`}
           className='text-sm underline hover:no-underline'
         >
           Subscribe (ICS)

@@ -63,13 +63,13 @@ export async function GET() {
           : 'Outside';
 
     const uid = `asg-${a.id}@kitchener-gurdwara`;
-    const s = a.start ?? b.start;
-    const e = a.end ?? b.end;
-    const dtStart = s
+    const sStart = a.start ?? b.start;
+    const sEnd = a.end ?? b.end;
+    const dtStart = sStart
       .toISOString()
       .replace(/[-:]/g, '')
       .replace(/\.\d+Z$/, 'Z');
-    const dtEnd = e
+    const dtEnd = sEnd
       .toISOString()
       .replace(/[-:]/g, '')
       .replace(/\.\d+Z$/, 'Z');

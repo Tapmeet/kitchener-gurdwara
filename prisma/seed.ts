@@ -141,7 +141,6 @@ async function upsertUser(
     },
   });
 }
-
 async function main() {
   // Admins
   await prisma.user.upsert({
@@ -215,7 +214,7 @@ async function main() {
   await upsertHall('Main Hall', 350);
   await upsertHall('Upper Hall', 100);
 
-  // Staff (skills + optional jatha/emails)
+  // Staff (skills + jatha/emails)
   await upsertStaff('Granthi', [StaffSkill.PATH], {
     email: 'granthi@example.com',
     phone: '+11234567890',
@@ -245,15 +244,13 @@ async function main() {
     email: 'sevadar6@example.com',
   });
 
-  // Sukhmani Sahib Path + Kirtan (total 2.5h; Path 1.5h then Kirtan 1h)
+  // Sukhmani Sahib Path + Kirtan (2.5h; Path 1.5h → Kirtan 1h)
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 150,
-    // Max concurrent heads: Kirtan window (3), not sum across windows
-    peopleRequired: 3,
+    peopleRequired: 3, // max concurrent heads during Kirtan window
     minPathers: 1,
-    // Kirtan only at the end -> minKirtanis stays 0; trailing drives the jatha
-    minKirtanis: 0,
-    trailingKirtanMinutes: 60, // last 60 min is Kirtan
+    minKirtanis: 0, // trailingKirtan drives the jatha
+    trailingKirtanMinutes: 60,
     pathRotationMinutes: 0,
     pathClosingDoubleMinutes: 0,
     requiresHall: false,
@@ -261,7 +258,7 @@ async function main() {
     compWeight: 3,
   });
 
-  // Sukhmani Sahib Path (Path only, 1.5h)
+  // Sukhmani Sahib Path (1.5h Path only)
   await upsertProgram('Sukhmani Sahib Path', ProgramCategory.PATH, {
     durationMinutes: 90,
     peopleRequired: 1,
@@ -278,28 +275,27 @@ async function main() {
   // Anand Karaj (Path + Kirtan concurrent full window, e.g., 3h)
   await upsertProgram('Anand Karaj', ProgramCategory.OTHER, {
     durationMinutes: 180,
-    // Full-window Kirtan jatha (3) + 1 pathi concurrently => 4 heads
-    peopleRequired: 4,
+    peopleRequired: 4, // 3 Kirtan + 1 Path concurrently
     minPathers: 1,
     minKirtanis: 3, // full-window Kirtan
-    trailingKirtanMinutes: 0, // not trailing; it's the whole time
+    trailingKirtanMinutes: 0,
     pathRotationMinutes: 0,
     pathClosingDoubleMinutes: 0,
     requiresHall: false,
-    canBeOutsideGurdwara: false, // typically inside
+    canBeOutsideGurdwara: false,
     compWeight: 4,
   });
 
-  // Alania Da Path (Antim Ardas) + Kirtan (2h total; Path 1h → Kirtan 1h)
+  // Alania Da Path + Kirtan (2h total; Path 1h → Kirtan 1h)
   await upsertProgram(
     'Alania Da Path (Antim Ardas) + Kirtan',
     ProgramCategory.PATH,
     {
       durationMinutes: 120,
-      peopleRequired: 3, // Kirtan window max
+      peopleRequired: 3,
       minPathers: 1,
-      minKirtanis: 0, // trailing drives the jatha
-      trailingKirtanMinutes: 60, // last 60 min is Kirtan
+      minKirtanis: 0,
+      trailingKirtanMinutes: 60,
       pathRotationMinutes: 0,
       pathClosingDoubleMinutes: 0,
       requiresHall: false,
@@ -313,7 +309,7 @@ async function main() {
     durationMinutes: 180,
     peopleRequired: 3,
     minPathers: 0,
-    minKirtanis: 3, // full-window Kirtan
+    minKirtanis: 3,
     trailingKirtanMinutes: 0,
     pathRotationMinutes: 0,
     pathClosingDoubleMinutes: 0,
@@ -327,7 +323,7 @@ async function main() {
     durationMinutes: 60,
     peopleRequired: 3,
     minPathers: 0,
-    minKirtanis: 3, // full-window Kirtan
+    minKirtanis: 3,
     trailingKirtanMinutes: 0,
     pathRotationMinutes: 0,
     pathClosingDoubleMinutes: 0,
@@ -336,15 +332,15 @@ async function main() {
     compWeight: 1,
   });
 
-  /* Optional: Akhand variants (operate differently via rotations) */
+  /* Akhand variants – hourly windows are produced by code (not peopleRequired) */
 
-  // Akhand Path + Kirtan (48h Path with rotations + closing double; last 1h Kirtan)
+  // Akhand Path + Kirtan (48h Path rotations + closing double; last 1h Kirtan)
   await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60, // 48h path + 1h kirtan tail
-    peopleRequired: 5, // not used for FLEX here, but ok to keep high
+    peopleRequired: 5, // not used for FLEX here
     minPathers: 1,
-    minKirtanis: 0, // trailing drives the jatha
-    trailingKirtanMinutes: 60, // last 60 min is Kirtan
+    minKirtanis: 0,
+    trailingKirtanMinutes: 60,
     pathRotationMinutes: 120, // 2h rotations
     pathClosingDoubleMinutes: 60, // last hour 2x pathis
     requiresHall: false,
@@ -355,7 +351,7 @@ async function main() {
   // Akhand Path (48h Path only, rotations + closing double)
   await upsertProgram('Akhand Path', ProgramCategory.PATH, {
     durationMinutes: 48 * 60,
-    peopleRequired: 5,
+    peopleRequired: 5, // not used for FLEX here
     minPathers: 1,
     minKirtanis: 0,
     trailingKirtanMinutes: 0,

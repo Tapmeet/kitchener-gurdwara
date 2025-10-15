@@ -122,6 +122,7 @@ export default async function Page({
     ? await prisma.bookingAssignment.findMany({
         where: {
           staffId: { in: staffIds },
+          booking: { status: 'CONFIRMED' },
           OR: [
             // windowed shifts: [a.start, a.end) overlaps [rangeStart, rangeEnd)
             { AND: [{ start: { lt: rangeEnd } }, { end: { gt: rangeStart } }] },

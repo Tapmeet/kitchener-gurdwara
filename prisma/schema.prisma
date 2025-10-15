@@ -43,6 +43,11 @@ enum BookingStatus {
   EXPIRED
 }
 
+enum AssignmentState {
+  PROPOSED
+  CONFIRMED
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -60,14 +65,7 @@ model User {
   sessions Session[]
 
   // App relations
-  /**
-   * Bookings created (entered) by this user (e.g., admin)
-   */
-  createdBookings Booking[] @relation("CreatedBy")
-
-  /**
-   * Bookings approved by this user (e.g., admin)
-   */
+  createdBookings  Booking[] @relation("CreatedBy")
   approvedBookings Booking[] @relation("ApprovedBy")
 }
 
@@ -98,9 +96,9 @@ model ProgramType {
 
   compWeight Int @default(1)
 
-  // NEW: smart scheduling fields
+  // Smart scheduling fields
   trailingKirtanMinutes    Int @default(0) // if >0, last N minutes need a full jatha (3 kirtanis)
-  pathRotationMinutes      Int @default(0) // if >0, slice PATH work into N-minute shifts (e.g., 120)
+  pathRotationMinutes      Int @default(0) // if >0, slice PATH work into N-minute shifts
   pathClosingDoubleMinutes Int @default(0) // last N minutes need 2 pathis instead of 1
 
   bookingItems BookingItem[]
@@ -124,11 +122,9 @@ model Booking {
   contactEmail String? @db.VarChar(320)
   notes        String?
 
-  // Who created the booking record (often admin)
   createdById String?
   createdBy   User?   @relation("CreatedBy", fields: [createdById], references: [id])
 
-  // Who approved the booking (admin)
   approvedAt   DateTime?
   approvedById String?
   approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
@@ -182,9 +178,12 @@ model BookingAssignment {
   bookingItemId String
   staffId       String
 
-  // NEW: windowed assignment (if null => whole booking window)
+  // Windowed assignment (if null => whole booking window)
   start DateTime?
   end   DateTime?
+
+  // NEW
+  state AssignmentState @default(PROPOSED)
 
   booking     Booking     @relation("BookingAssignments", fields: [bookingId], references: [id], onDelete: Cascade)
   bookingItem BookingItem @relation("ItemAssignments", fields: [bookingItemId], references: [id], onDelete: Cascade)
@@ -192,9 +191,13 @@ model BookingAssignment {
 
   createdAt DateTime @default(now())
 
-  @@unique([bookingItemId, staffId])
-  @@index([bookingId])
-  @@index([staffId])
+  // allow multiple windows per staff+item, but dedupe exact duplicates
+  @@unique([bookingItemId, staffId, start, end])
+  // helpful for queries
+  @@index([bookingId, start, end])
+  @@index([staffId, start, end])
+  @@index([staffId, state]) // NEW
+  @@index([bookingId, state]) // NEW
 }
 
 model Account {
