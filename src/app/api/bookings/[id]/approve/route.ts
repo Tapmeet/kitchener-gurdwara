@@ -16,10 +16,20 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
   if (!booking)
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  await prisma.booking.update({
-    where: { id: params.id },
-    data: { status: 'CONFIRMED', approvedAt: new Date() },
-  });
+  await prisma.$transaction([
+    prisma.bookingAssignment.updateMany({
+      where: { bookingId: params.id, state: 'PROPOSED' },
+      data: { state: 'CONFIRMED' },
+    }),
+    prisma.booking.update({
+      where: { id: params.id },
+      data: {
+        status: 'CONFIRMED',
+        approvedAt: new Date(),
+        approvedById: (session.user as any).id ?? null,
+      },
+    }),
+  ]);
 
   return NextResponse.json({ ok: true });
 }

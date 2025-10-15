@@ -14,21 +14,16 @@ export async function PATCH(
   if (!session?.user || !isAdmin((session.user as any).role)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const { staffId } = await req.json();
+  const body = await req.json();
+  const staffId = body?.staffId as string | undefined;
   if (!staffId)
     return NextResponse.json({ error: 'Missing staffId' }, { status: 400 });
 
-  const a = await prisma.bookingAssignment.update({
+  const updated = await prisma.bookingAssignment.update({
     where: { id: params.id },
     data: { staffId },
     include: { booking: true },
   });
 
-  if (a.booking.status !== 'PENDING') {
-    return NextResponse.json({
-      warning:
-        'Booking already confirmed; change will affect confirmed schedule.',
-    });
-  }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, bookingId: updated.bookingId });
 }

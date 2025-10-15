@@ -1,4 +1,3 @@
-// src/app/my-assignments/page.tsx
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
@@ -10,7 +9,7 @@ const fmt = (d: Date | string | number, p = 'EEE, MMM d yyyy, h:mm a') =>
 
 export default async function MyAssignmentsPage() {
   const session = await auth();
-  if (!session) {
+  if (!session?.user) {
     return (
       <div className='p-6'>
         Please{' '}
@@ -22,39 +21,18 @@ export default async function MyAssignmentsPage() {
     );
   }
 
-  if (!session?.user) {
-    return <div className='p-6'>Please sign in to view your assignments.</div>;
-  }
+  const email = session.user.email?.toLowerCase();
+  if (!email) return <div className='p-6'>Your account has no email.</div>;
 
-  let staff: { id: string; name: string } | null = null;
-
-  if (session.user.email) {
-    staff = await prisma.staff.findFirst({
-      where: { email: { equals: session.user.email, mode: 'insensitive' } },
-      select: { id: true, name: true },
-    });
-  }
-  if (!staff) {
-    staff = await prisma.staff.findFirst({
-      where: { name: { equals: 'Granthi', mode: 'insensitive' } },
-      select: { id: true, name: true },
-    });
-  }
-
+  const staff = await prisma.staff.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    select: { id: true, name: true },
+  });
   if (!staff) {
     return (
       <div className='p-6'>
-        No matching staff found
-        {session.user.email ? (
-          <>
-            {' '}
-            for <b>{session.user.email}</b>
-          </>
-        ) : (
-          ''
-        )}
-        .<br />
-        Ask an admin to link your account to a Staff record or set Staff.email.
+        No Staff profile linked to <b>{email}</b>. Ask an admin to set{' '}
+        <code>staff.email</code>.
       </div>
     );
   }
@@ -63,7 +41,12 @@ export default async function MyAssignmentsPage() {
   const assignments = await prisma.bookingAssignment.findMany({
     where: {
       staffId: staff.id,
-      booking: { status: 'CONFIRMED', end: { gte: now } },
+      state: 'CONFIRMED',
+      OR: [
+        { end: { gte: now } }, // windowed
+        { AND: [{ end: null }, { booking: { end: { gte: now } } }] }, // legacy
+      ],
+      booking: { status: 'CONFIRMED' },
     },
     include: {
       booking: { include: { hall: true } },
@@ -72,9 +55,8 @@ export default async function MyAssignmentsPage() {
     orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
   });
 
-  if (!assignments.length) {
+  if (!assignments.length)
     return <div className='p-6'>No upcoming assignments.</div>;
-  }
 
   return (
     <div className='p-6 space-y-4'>
@@ -91,7 +73,9 @@ export default async function MyAssignmentsPage() {
       <ul className='space-y-3'>
         {assignments.map((a) => {
           const b = a.booking;
-          const it = a.bookingItem;
+          const it = a.bookingItem!;
+          const sStart = a.start ?? b.start;
+          const sEnd = a.end ?? b.end;
           const role =
             it.programType.category === 'PATH'
               ? 'Path'
@@ -111,7 +95,7 @@ export default async function MyAssignmentsPage() {
             <li key={a.id} className='rounded-xl border p-4'>
               <div className='text-base font-medium'>{b.title}</div>
               <div className='text-sm text-gray-600'>
-                {fmt(a.start ?? b.start)} – {fmt(a.end ?? b.end)}
+                {fmt(sStart)} – {fmt(sEnd)}
               </div>
               <div className='text-sm'>{loc}</div>
               <div className='mt-1 text-sm'>
