@@ -217,7 +217,6 @@ async function main() {
   // Staff (skills + jatha/emails)
   await upsertStaff('Granthi', [StaffSkill.PATH], {
     email: 'granthi@example.com',
-    phone: '+11234567890',
   });
   await upsertStaff('Sevadar A1', [StaffSkill.KIRTAN, StaffSkill.PATH], {
     jatha: Jatha.A,
