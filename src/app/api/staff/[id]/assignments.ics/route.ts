@@ -14,15 +14,10 @@ export async function GET(
 ) {
   const { id: staffId } = await ctx.params; // 👈
 
-  const now = new Date();
   const rows = await prisma.bookingAssignment.findMany({
     where: {
       staffId,
       state: 'CONFIRMED',
-      OR: [
-        { end: { gte: now } },
-        { AND: [{ end: null }, { booking: { end: { gte: now } } }] },
-      ],
       booking: { status: 'CONFIRMED' },
     },
     include: {

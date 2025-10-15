@@ -18,7 +18,13 @@ type Row = {
   candidates: Staff[];
 };
 
-export default function ReviewProposed({ bookingId }: { bookingId: string }) {
+export default function ReviewProposed({
+  bookingId,
+  showApprove = true,
+}: {
+  bookingId: string;
+  showApprove?: boolean;
+}) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -111,16 +117,17 @@ export default function ReviewProposed({ bookingId }: { bookingId: string }) {
           </div>
         </div>
       ))}
-
-      <div className='pt-2'>
-        <button
-          onClick={approveAll}
-          className='px-4 py-2 bg-blue-600 text-white rounded'
-          disabled={isPending}
-        >
-          Approve
-        </button>
-      </div>
+      {showApprove && (
+        <div className='pt-2'>
+          <button
+            onClick={approveAll}
+            className='px-4 py-2 bg-blue-600 text-white rounded'
+            disabled={isPending}
+          >
+            Approve
+          </button>
+        </div>
+      )}
     </div>
   );
 }

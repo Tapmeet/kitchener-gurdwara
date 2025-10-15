@@ -1,29 +1,25 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { auth } from '@/lib/auth';
-
-const isAdmin = (r?: string | null) => r === 'ADMIN';
 
 export async function PATCH(
   req: Request,
-  ctx: { params: Promise<{ id: string }> } // 👈
+  ctx: { params: Promise<{ id: string }> } // ← Promise
 ) {
-  const { id } = await ctx.params; // 👈
-
-  const session = await auth();
-  if (!session?.user || !isAdmin((session.user as any).role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { staffId } = await req.json();
-  if (!staffId)
+  const { id } = await ctx.params; // ← await
+  const body = await req.json();
+  const staffId = String(body?.staffId || '').trim();
+  if (!staffId) {
     return NextResponse.json({ error: 'Missing staffId' }, { status: 400 });
+  }
 
   const updated = await prisma.bookingAssignment.update({
     where: { id },
     data: { staffId },
-    select: { id: true, bookingId: true, staffId: true },
+    include: {
+      staff: true,
+      bookingItem: { include: { programType: true } },
+    },
   });
 
-  return NextResponse.json({ ok: true, ...updated });
+  return NextResponse.json({ ok: true, updated });
 }

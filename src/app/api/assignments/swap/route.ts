@@ -1,57 +1,84 @@
 // src/app/api/assignments/swap/route.ts
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { auth } from '@/lib/auth';
 
-function isPriv(role?: string | null) {
-  return role === "ADMIN";
-}
+const isAdmin = (r?: string | null) => r === 'ADMIN';
 
-// POST body: { a: string, b: string }
-// where a and b are BookingAssignment IDs. Swaps staff between them.
 export async function POST(req: Request) {
   const session = await auth();
-  const role = (session?.user as any)?.role ?? null;
-  if (!session?.user || !isPriv(role)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session?.user || !isAdmin((session.user as any).role)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => null) as { a?: string; b?: string } | null;
-  if (!body?.a || !body?.b || body.a === body.b) {
-    return NextResponse.json({ error: "Provide two different assignment IDs: { a, b }" }, { status: 400 });
+  const body = await req.json();
+  const bookingId = String(body?.bookingId || '').trim();
+  const aId = String(body?.a || '').trim();
+  const bId = String(body?.b || '').trim();
+
+  if (!bookingId || !aId || !bId || aId === bId) {
+    return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   }
 
-  try {
-    const [A, B] = await prisma.$transaction(async (tx) => {
-      const A = await tx.bookingAssignment.findUnique({
-        where: { id: body.a },
-        include: { bookingItem: { include: { programType: true } } },
-      });
-      const B = await tx.bookingAssignment.findUnique({
-        where: { id: body.b },
-        include: { bookingItem: { include: { programType: true } } },
-      });
-      if (!A || !B) throw new Error("NOT_FOUND");
+  const [A, B] = await Promise.all([
+    prisma.bookingAssignment.findUnique({
+      where: { id: aId },
+      include: { booking: true, bookingItem: true },
+    }),
+    prisma.bookingAssignment.findUnique({
+      where: { id: bId },
+      include: { booking: true, bookingItem: true },
+    }),
+  ]);
 
-      // Ensure categories match (e.g., both KIRTAN)
-      const catA = (A as any)?.bookingItem?.programType?.category;
-      const catB = (B as any)?.bookingItem?.programType?.category;
-      if (catA && catB && catA !== catB) throw new Error("CATEGORY_MISMATCH");
+  if (!A || !B)
+    return NextResponse.json(
+      { error: 'Assignment not found' },
+      { status: 404 }
+    );
+  if (A.bookingId !== bookingId || B.bookingId !== bookingId) {
+    return NextResponse.json(
+      { error: 'Assignments are not from this booking' },
+      { status: 400 }
+    );
+  }
+  if (A.state !== 'PROPOSED' || B.state !== 'PROPOSED') {
+    return NextResponse.json(
+      { error: 'Can only swap PROPOSED assignments' },
+      { status: 400 }
+    );
+  }
 
-      await tx.bookingAssignment.update({ where: { id: A.id }, data: { staffId: B.staffId } });
-      await tx.bookingAssignment.update({ where: { id: B.id }, data: { staffId: A.staffId } });
-      return [A, B] as const;
+  // if both are the exact same window & item, swapping staff in-place will hit
+  // the unique constraint ([bookingItemId, staffId, start, end]). Use dropdown.
+  const sameWindow =
+    A.bookingItemId === B.bookingItemId &&
+    (A.start?.getTime() ?? A.booking.start.getTime()) ===
+      (B.start?.getTime() ?? B.booking.start.getTime()) &&
+    (A.end?.getTime() ?? A.booking.end.getTime()) ===
+      (B.end?.getTime() ?? B.booking.end.getTime());
+
+  if (sameWindow) {
+    return NextResponse.json(
+      {
+        error:
+          'These rows are the same slot. Use the per-row dropdown to change staff.',
+      },
+      { status: 409 }
+    );
+  }
+
+  // swap: safe when the time windows differ → no unique-key conflict
+  await prisma.$transaction(async (tx) => {
+    await tx.bookingAssignment.update({
+      where: { id: A.id },
+      data: { staffId: B.staffId },
     });
+    await tx.bookingAssignment.update({
+      where: { id: B.id },
+      data: { staffId: A.staffId },
+    });
+  });
 
-    return NextResponse.json({ ok: true, a: body.a, b: body.b });
-  } catch (e: any) {
-    const msg = e?.message ?? "";
-    if (msg.includes("NOT_FOUND")) {
-      return NextResponse.json({ error: "One or both assignments not found" }, { status: 404 });
-    }
-    if (msg.includes("CATEGORY_MISMATCH")) {
-      return NextResponse.json({ error: "Assignments must have the same program category" }, { status: 400 });
-    }
-    return NextResponse.json({ error: "Swap failed" }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true });
 }

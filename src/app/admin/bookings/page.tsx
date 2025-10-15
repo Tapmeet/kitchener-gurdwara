@@ -114,12 +114,18 @@ export default async function AdminBookingsPage() {
 
                     {/* 👇 Add the swap UI here */}
                     <div className='mt-3'>
-                      <ReviewProposed bookingId={b.id} />
+                      <ReviewProposed bookingId={b.id} showApprove={false} />
                     </div>
                   </div>
 
                   {/* Your existing Approve/Cancel buttons (Approve should POST /api/bookings/[id]/approve) */}
-                  <div className='md:w-[240px] md:pt-1'>
+                  <div className='md:w-[240px] flex flex-col gap-2'>
+                    <a
+                      href={`/bookings/${b.id}/assignments`}
+                      className='text-sm underline hover:no-underline'
+                    >
+                      Manage assignments
+                    </a>
                     <ApproveButtons id={b.id} />
                   </div>
                 </div>

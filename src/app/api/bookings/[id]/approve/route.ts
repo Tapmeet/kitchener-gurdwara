@@ -1,19 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { auth } from '@/lib/auth';
-
-const isAdmin = (r?: string | null) => r === 'ADMIN';
 
 export async function POST(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> } // 👈
+  ctx: { params: Promise<{ id: string }> } // ← Promise
 ) {
-  const { id } = await ctx.params; // 👈
-
-  const session = await auth();
-  if (!session?.user || !isAdmin((session.user as any).role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { id } = await ctx.params; // ← await
 
   await prisma.$transaction([
     prisma.bookingAssignment.updateMany({
@@ -22,11 +14,7 @@ export async function POST(
     }),
     prisma.booking.update({
       where: { id },
-      data: {
-        status: 'CONFIRMED',
-        approvedAt: new Date(),
-        approvedById: (session.user as any).id ?? null,
-      },
+      data: { status: 'CONFIRMED', approvedAt: new Date() },
     }),
   ]);
 
