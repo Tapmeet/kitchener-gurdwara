@@ -1,6 +1,6 @@
 // src/lib/fairness.ts
 import { prisma } from '@/lib/db';
-import { startOfWeek, endOfWeek, subWeeks } from 'date-fns';
+import { startOfWeek, endOfWeek, subWeeks, startOfDay } from 'date-fns';
 import type { ProgramCategory } from '@prisma/client';
 
 export type Role = 'PATH' | 'KIRTAN';
@@ -155,7 +155,31 @@ export async function pickJathaForSlot(
   if (aFree.length > bFree.length) return 'A';
   if (bFree.length > aFree.length) return 'B';
 
-  const seed = `${start.toISOString().slice(0, 10)}-${start.getHours()}`;
-  const sum = Array.from(seed).reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  return sum % 2 === 0 ? 'A' : 'B';
+  // FINAL tie-breaker: alternate within the day by sequence
+  const earlier = await countEarlierDayKirtanWindows(start);
+  return earlier % 2 === 0 ? 'A' : 'B';
+}
+
+export async function countEarlierDayKirtanWindows(start: Date) {
+  const dayStart = startOfDay(start);
+  const rows = await prisma.booking.findMany({
+    where: {
+      // only bookings earlier this day
+      start: { gte: dayStart, lt: start },
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      // booking has at least one item that creates a Kirtan window
+      items: {
+        some: {
+          programType: {
+            OR: [
+              { category: 'KIRTAN' as ProgramCategory },
+              { trailingKirtanMinutes: { gt: 0 } }, // e.g., “Path + Kirtan” tail
+            ],
+          },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  return rows.length;
 }
