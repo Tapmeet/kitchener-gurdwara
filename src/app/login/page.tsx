@@ -36,15 +36,26 @@ const ERROR_MAP: Record<string, string> = {
 
 function GoogleIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 48 48" aria-hidden="true" className="h-5 w-5" {...props}>
-      <path fill="#EA4335" d="M24 9.5c3.15 0 5.98 1.09 8.21 2.91l6.15-6.15C34.89 3.1 29.79 1 24 1 14.64 1 6.64 6.39 3.09 14.06l7.8 6.06C12.43 14.28 17.73 9.5 24 9.5z"/>
-      <path fill="#34A853" d="M24 46c6.12 0 11.27-2.02 15.02-5.49l-7.18-5.88c-2.01 1.35-4.58 2.16-7.84 2.16-6 0-11.1-4.04-12.93-9.48l-7.9 6.1C6.76 40.87 14.62 46 24 46z"/>
-      <path fill="#4A90E2" d="M44.5 24c0-1.58-.14-3.07-.41-4.5H24v9h11.68c-.51 2.6-2.02 4.8-4.34 6.13l7.18 5.88C42.02 37.27 44.5 31.25 44.5 24z"/>
-      <path fill="#FBBC05" d="M10.09 27.31A14.5 14.5 0 0 1 9.5 24c0-1.15.19-2.27.54-3.31l-7.8-6.06A22.8 22.8 0 0 0 1.5 24c0 3.67.89 7.13 2.49 10.17l7.9-6.86z"/>
+    <svg viewBox='0 0 48 48' aria-hidden='true' className='h-5 w-5' {...props}>
+      <path
+        fill='#EA4335'
+        d='M24 9.5c3.15 0 5.98 1.09 8.21 2.91l6.15-6.15C34.89 3.1 29.79 1 24 1 14.64 1 6.64 6.39 3.09 14.06l7.8 6.06C12.43 14.28 17.73 9.5 24 9.5z'
+      />
+      <path
+        fill='#34A853'
+        d='M24 46c6.12 0 11.27-2.02 15.02-5.49l-7.18-5.88c-2.01 1.35-4.58 2.16-7.84 2.16-6 0-11.1-4.04-12.93-9.48l-7.9 6.1C6.76 40.87 14.62 46 24 46z'
+      />
+      <path
+        fill='#4A90E2'
+        d='M44.5 24c0-1.58-.14-3.07-.41-4.5H24v9h11.68c-.51 2.6-2.02 4.8-4.34 6.13l7.18 5.88C42.02 37.27 44.5 31.25 44.5 24z'
+      />
+      <path
+        fill='#FBBC05'
+        d='M10.09 27.31A14.5 14.5 0 0 1 9.5 24c0-1.15.19-2.27.54-3.31l-7.8-6.06A22.8 22.8 0 0 0 1.5 24c0 3.67.89 7.13 2.49 10.17l7.9-6.86z'
+      />
     </svg>
   );
 }
-
 
 function AppleIcon() {
   return (
@@ -183,7 +194,15 @@ export default function LoginPage() {
             />
           </div>
           <button
-            className='btn btn-primary w-full rounded-md bg-black text-white py-2 font-medium disabled:opacity-50'
+            className='
+  w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white
+  relative overflow-hidden border border-white/15
+  bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur
+  hover:from-blue-800/80 hover:to-blue-800/60
+  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40
+  active:scale-[.99] transition
+  disabled:opacity-50 disabled:cursor-not-allowed
+'
             type='submit'
             disabled={anyLoading}
           >
@@ -194,9 +213,7 @@ export default function LoginPage() {
         {/* Separator styled like the screenshot */}
         <div className='flex items-center gap-3'>
           <div className='h-px flex-1 bg-black/10' />
-          <div className='text-xs tracking-wide text-gray-500'>
-            OR
-          </div>
+          <div className='text-xs tracking-wide text-gray-500'>OR</div>
           <div className='h-px flex-1 bg-black/10' />
         </div>
 
@@ -209,7 +226,9 @@ export default function LoginPage() {
             className='w-full inline-flex items-center justify-center gap-2 rounded-md border border-black/15 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50'
           >
             <GoogleIcon />
-            {oauthSubmitting === 'google' ? 'Continuing…' : 'Sign in with Google'}
+            {oauthSubmitting === 'google'
+              ? 'Continuing…'
+              : 'Sign in with Google'}
           </button>
 
           {process.env.NEXT_PUBLIC_ENABLE_APPLE === 'true' && (

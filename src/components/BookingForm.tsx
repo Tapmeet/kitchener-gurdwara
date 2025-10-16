@@ -996,11 +996,25 @@ export default function BookingForm() {
             </div>
             <div className='flex items-end mb-2'>
               <button
-                className={`btn btn-primary w-full ${
-                  submitting || isLoadingAvail || !canSubmit ? 'opacity-70' : ''
-                }`}
+                className={[
+                  // base
+                  'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
+                  // gradient + blur + subtle border (matches header vibe)
+                  'relative overflow-hidden border border-white/15',
+                  'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
+                  // interactions
+                  'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
+                  // disabled
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                  // keep your previous opacity tweak
+                  submitting || isLoadingAvail || !canSubmit
+                    ? 'opacity-70'
+                    : '',
+                ].join(' ')}
                 disabled={submitting || isLoadingAvail || !canSubmit}
                 type='submit'
+                aria-busy={submitting || isLoadingAvail}
               >
                 {submitting
                   ? 'Submitting…'

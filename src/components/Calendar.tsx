@@ -398,8 +398,8 @@ export default function CalendarView() {
             --fc-today-bg-color: rgba(59, 130, 246, 0.08);
             --fc-now-indicator-color: #ef4444;
             --fc-event-text-color: rgb(17, 24, 39);
-            --fc-event-bg-color: #2563eb;
-            --fc-event-border-color: #1d4ed8;
+            --fc-event-bg-color: #5a6eab;
+            --fc-event-border-color: #596eab;
           }
 
           /* Grid views */

@@ -1,12 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 
 type Role = 'ADMIN' | 'STAFF' | 'LANGRI' | 'VIEWER' | (string & {});
+
+const loginBtn =
+  'whitespace-nowrap rounded-md px-3 py-2 font-medium text-white transition ' +
+  'relative overflow-hidden border border-white/15 ' +
+  'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur ' +
+  'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
 
 function ActiveLink({
   href,
@@ -78,19 +84,7 @@ export default function NavBar() {
     isAuthenticated && (role === 'STAFF' || role === 'LANGRI');
 
   return (
-    <header
-      className='
-    sticky top-0 z-40 text-white border-b border-white/15
-    relative overflow-hidden
-  '
-    >
-      {/* gradient background */}
-      <div className='absolute inset-0 -z-10 bg-[linear-gradient(112deg,theme(colors.indigo.900)_0%,theme(colors.violet.700)_50%,theme(colors.amber.400)_100%)]' />
-      {/* soft highlight so text pops without harshness */}
-      <div
-        className='absolute inset-0 -z-10 pointer-events-none opacity-25
-                  bg-[radial-gradient(120%_90%_at_10%_-10%,white,transparent_55%)]'
-      />
+    <header className='sticky top-0 z-40 text-white border-b border-white/15 relative overflow-hidden bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur'>
       <a
         href='#main-content'
         className='sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 bg-white text-blue-700 rounded px-3 py-1 text-sm shadow'
@@ -108,11 +102,14 @@ export default function NavBar() {
                 className='h-5 w-5'
               />
             </span>
-            <div>
-              <h1 className='text-xl md:text-2xl font-bold tracking-tight'>
+            <div className='min-w-0'>
+              <h1 className='text-base sm:text-lg md:text-2xl font-bold tracking-tight leading-tight truncate'>
                 Golden Triangle Sikh Association
               </h1>
-              <p className='text-white/80 text-xs md:text-sm'>
+              <p
+                className='text-white/80 text-[11px] sm:text-xs md:text-sm truncate max-w-[65vw] sm:max-w-none'
+                title="2070 Snyder's Rd E, Petersburg, ON N0B 2H0 | (519) 634-5681"
+              >
                 2070 Snyder's Rd E, Petersburg, ON N0B 2H0 | (519) 634-5681
               </p>
             </div>
@@ -176,7 +173,7 @@ export default function NavBar() {
             {!isAuthenticated ? (
               <button
                 onClick={() => signIn(undefined, { callbackUrl: '/' })}
-                className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white text-blue-700 hover:bg-white/90'
+                className={`ml-2 text-sm ${loginBtn}`}
               >
                 Login
               </button>
@@ -267,7 +264,7 @@ export default function NavBar() {
                     setOpen(false);
                     signIn(undefined, { callbackUrl: '/' });
                   }}
-                  className='px-3 py-2 rounded-lg text-sm font-medium bg-white text-blue-700 hover:bg-white/90'
+                  className={`text-sm ${loginBtn}`}
                 >
                   Login
                 </button>
