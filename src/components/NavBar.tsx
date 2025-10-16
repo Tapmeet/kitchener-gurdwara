@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
@@ -77,23 +78,42 @@ export default function NavBar() {
     isAuthenticated && (role === 'STAFF' || role === 'LANGRI');
 
   return (
-    <header className='sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/10 bg-gradient-to-br from-blue-600 to-indigo-600 text-white border-b border-white/15'>
+    <header
+      className='
+    sticky top-0 z-40 text-white border-b border-white/15
+    relative overflow-hidden
+  '
+    >
+      {/* gradient background */}
+      <div className='absolute inset-0 -z-10 bg-[linear-gradient(112deg,theme(colors.indigo.900)_0%,theme(colors.violet.700)_50%,theme(colors.amber.400)_100%)]' />
+      {/* soft highlight so text pops without harshness */}
+      <div
+        className='absolute inset-0 -z-10 pointer-events-none opacity-25
+                  bg-[radial-gradient(120%_90%_at_10%_-10%,white,transparent_55%)]'
+      />
       <a
         href='#main-content'
         className='sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 bg-white text-blue-700 rounded px-3 py-1 text-sm shadow'
       >
         Skip to main content
       </a>
-
       <div className='container mx-auto px-4 py-4'>
         <div className='flex items-center justify-between gap-4'>
+          {/* Brand + Khanda */}
           <Link href='/' className='group inline-flex items-center gap-3'>
+            <span className='relative inline-flex h-9 w-9 items-center justify-center rounded-full ring-1 ring-white/20 bg-white/10 shadow-sm'>
+              <img
+                src='/brand/khanda.gif'
+                alt='Kitchener Gurdwara'
+                className='h-5 w-5'
+              />
+            </span>
             <div>
               <h1 className='text-xl md:text-2xl font-bold tracking-tight'>
                 Kitchener Gurdwara
               </h1>
               <p className='text-white/80 text-xs md:text-sm'>
-                Book halls & home occasions
+                Book halls &amp; home occasions
               </p>
             </div>
           </Link>
@@ -113,6 +133,46 @@ export default function NavBar() {
               <ActiveLink href='/my-bookings'>My Bookings</ActiveLink>
             )}
 
+            {/* GTSA external link */}
+            <Link
+              href='https://thegtsa.com'
+              target='_blank'
+              rel='noopener noreferrer'
+              className='ml-1 px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20 border border-white/20 inline-flex items-center gap-1'
+              aria-label='Open GTSA website in a new tab'
+            >
+              GTSA
+              <svg
+                viewBox='0 0 24 24'
+                width='16'
+                height='16'
+                aria-hidden='true'
+                className='opacity-90'
+              >
+                <path
+                  d='M14 3h7v7'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                  strokeLinecap='round'
+                />
+                <path
+                  d='M10 14L21 3'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                  strokeLinecap='round'
+                />
+                <path
+                  d='M21 14v6a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6'
+                  fill='none'
+                  stroke='currentColor'
+                  strokeWidth='2'
+                  strokeLinecap='round'
+                />
+              </svg>
+            </Link>
+
             {!isAuthenticated ? (
               <button
                 onClick={() => signIn(undefined, { callbackUrl: '/' })}
@@ -127,7 +187,7 @@ export default function NavBar() {
                 </span>
                 <button
                   onClick={() => signOut({ callbackUrl: '/' })}
-                  className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg.white/20 border border-white/20'
+                  className='ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-white/10 text-white hover:bg-white/20 border border-white/20'
                 >
                   Sign out
                 </button>
@@ -188,6 +248,18 @@ export default function NavBar() {
                   My Schedule
                 </ActiveLink>
               )}
+
+              {/* GTSA external link (mobile) */}
+              <a
+                href='https://thegtsa.com'
+                target='_blank'
+                rel='noopener noreferrer'
+                className='px-3 py-2 rounded-lg text-sm font-medium text-white/90 hover:text-white hover:bg-white/10'
+                onClick={() => setOpen(false)}
+              >
+                GTSA ↗
+              </a>
+
               <div className='my-2 border-t border-white/15' />
               {!isAuthenticated ? (
                 <button

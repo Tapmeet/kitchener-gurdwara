@@ -2,7 +2,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Providers from './providers';
-import NavBarBridge from '@/components/NavBarBridge';
+import NavBar from '@/components/NavBar';
 import AdminSubnavClient from '@/components/AdminSubnavClient';
 import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/next';
@@ -26,7 +26,7 @@ export default function RootLayout({
       <body className='min-h-screen flex flex-col'>
         <Providers>
           <AdminSubnavClient />
-          <NavBarBridge />
+          <NavBar />
 
           <main
             id='main-content'
