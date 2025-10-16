@@ -110,10 +110,10 @@ export default function NavBar() {
             </span>
             <div>
               <h1 className='text-xl md:text-2xl font-bold tracking-tight'>
-                Kitchener Gurdwara
+                Golden Triangle Sikh Association
               </h1>
               <p className='text-white/80 text-xs md:text-sm'>
-                Book halls &amp; home occasions
+                2070 Snyder's Rd E, Petersburg, ON N0B 2H0 | (519) 634-5681
               </p>
             </div>
           </Link>
