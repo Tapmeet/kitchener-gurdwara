@@ -109,6 +109,48 @@ function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
   const h = h24 % 12;
   return { h12: h === 0 ? 12 : h, ap };
 }
+const MS_PER_MIN = 60_000;
+const MS_PER_DAY = 86_400_000;
+
+function computeEndPreview(
+  dateStr: string,
+  startHour24: number,
+  durationMinutes: number
+) {
+  if (!durationMinutes) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1, startHour24, 0, 0, 0); // local time
+  const end = new Date(start.getTime() + durationMinutes * MS_PER_MIN);
+
+  const isSameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+
+  const daySpan = Math.max(
+    1,
+    Math.round((end.getTime() - start.getTime()) / MS_PER_DAY)
+  );
+
+  const endDate = end.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  const endTime = end.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+  const spanText =
+    durationMinutes >= 1440
+      ? ` (${daySpan} day${daySpan > 1 ? 's' : ''})`
+      : ` • ${Math.ceil(durationMinutes / 60)}h`;
+
+  const prep = isSameDay ? 'at' : 'on';
+  return `Ends ${prep} ${endDate} ${endTime}${spanText}`;
+}
 
 const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7);
 
@@ -177,12 +219,10 @@ export default function BookingForm() {
     };
   }, []);
 
-  // End-time preview
-  const endPreview = useMemo(() => {
-    const addHrs = Math.ceil((durationMinutes || 0) / 60);
-    const end24 = (startHour24 + addHrs) % 24;
-    return to12(end24);
-  }, [startHour24, durationMinutes]);
+  // End-time preview (shows proper date for multi-day programs like Akhand Path)
+  const endLabel = useMemo(() => {
+    return computeEndPreview(date, startHour24, durationMinutes);
+  }, [date, startHour24, durationMinutes]);
 
   const selectedProgramKey = selectedProgramId || '';
 
@@ -866,18 +906,9 @@ export default function BookingForm() {
               </div>
 
               <div className='md:col-span-2 -mt-2'>
-                <p className='text-xs text-gray-600'>
-                  Ends at{' '}
-                  <strong>
-                    {endPreview.h12}:00 {endPreview.ap}
-                  </strong>
-                  {selectedProgram && (
-                    <span className='text-xs text-gray-500'>
-                      {' '}
-                      • {Math.ceil((durationMinutes || 0) / 60)}h
-                    </span>
-                  )}
-                </p>
+                {selectedProgram && endLabel && (
+                  <p className='text-xs text-gray-600'>{endLabel}</p>
+                )}
               </div>
             </div>
           </div>

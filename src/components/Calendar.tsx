@@ -115,6 +115,36 @@ export default function CalendarView() {
     if (val) api()?.gotoDate(val); // jumps far ahead easily on mobile
   };
 
+  const listLabel = (ev: any) => {
+    const start: Date = ev.start!;
+    const end: Date | null = ev.end ?? null;
+
+    const fmtHM = (d: Date) =>
+      d.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+    const fmtMD = (d: Date) =>
+      d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+    if (!end) return `${fmtHM(start)}`;
+
+    const multiDay =
+      start.getFullYear() !== end.getFullYear() ||
+      start.getMonth() !== end.getMonth() ||
+      start.getDate() !== end.getDate();
+
+    if (multiDay) {
+      const days = Math.max(
+        1,
+        Math.round((end.getTime() - start.getTime()) / 86400000)
+      );
+      return `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end)} ${fmtHM(end)} (${days} day${days > 1 ? 's' : ''})`;
+    }
+    return `${fmtHM(start)} – ${fmtHM(end)}`;
+  };
+
   return (
     <section className='section'>
       <div className='card p-4 md:p-6 relative'>
@@ -266,53 +296,72 @@ export default function CalendarView() {
               fetchRange(arg.start, arg.end, ac.signal);
             }}
             events={events}
+            listDayFormat={{ weekday: 'long', month: 'short', day: 'numeric' }}
+            listDaySideFormat={false} // hides the tiny right-side date in list headers
             eventContent={(arg) => {
-              // helpers
+              // Helpers
               const fmtHM = (d: Date) =>
                 d.toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit',
-                  hour12: false,
+                  hour12: true,
                 });
               const fmtMD = (d: Date) =>
                 d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
               const start = arg.event.start!;
               const end = arg.event.end ?? null;
-
-              // detect multi-day
               const isMultiDay =
                 !!end &&
                 (end.getFullYear() !== start.getFullYear() ||
                   end.getMonth() !== start.getMonth() ||
                   end.getDate() !== start.getDate());
 
-              // compute days spanned (rounded)
-              const days = end
-                ? Math.max(
-                    1,
-                    Math.round((end.getTime() - start.getTime()) / 86400000)
-                  )
-                : 0;
+              // 1) List view (mobile): use your custom label
+              if (arg.view.type.startsWith('list')) {
+                const days = end
+                  ? Math.max(
+                      1,
+                      Math.round((end.getTime() - start.getTime()) / 86400000)
+                    )
+                  : 0;
+                const label = !end
+                  ? `${fmtHM(start)}`
+                  : isMultiDay
+                    ? `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end)} ${fmtHM(end)} (${days} day${days > 1 ? 's' : ''})`
+                    : `${fmtHM(start)} – ${fmtHM(end)}`;
 
-              // Build our own time text (don’t use arg.timeText)
-              let timeText = '';
-              if (isMultiDay) {
-                // Example: "Oct 12 10:00 → Oct 14 10:00 (2 days)"
-                timeText = `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end!)} ${fmtHM(end!)} (${days} day${days > 1 ? 's' : ''})`;
-              } else if (end) {
-                // Same-day timed event
-                timeText = `${fmtHM(start)} – ${fmtHM(end)}`;
-              } else {
-                // No explicit end
-                timeText = fmtHM(start);
+                return {
+                  html: `
+        <div class="fcgb-list">
+          <div class="fcgb-time">${label}</div>
+          <div class="fcgb-title">${arg.event.title}</div>
+        </div>`,
+                };
               }
 
-              // (Optional) If you want special wording for Akhand Path only:
-              // const isAkhand = (arg.event.extendedProps as any)?.programType === 'AKHAND_PATH';
-              // if (isAkhand && isMultiDay) timeText += ' • Akhand Path';
+              // 2) Month / Week / Day GRID views
+              let timeLabel = '';
+              if (isMultiDay) {
+                // Only show the full range on the first segment (prevents repeating on each day)
+                if ((arg as any).isStart) {
+                  const days = Math.max(
+                    1,
+                    Math.round((end!.getTime() - start.getTime()) / 86400000)
+                  );
+                  timeLabel = `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end!)} ${fmtHM(end!)} (${days} day${days > 1 ? 's' : ''})`;
+                } else {
+                  // Middle or ending segments: no time text; keep title only
+                  timeLabel = '';
+                }
+              } else {
+                // Same-day event
+                timeLabel = end
+                  ? `${fmtHM(start)} – ${fmtHM(end)}`
+                  : `${fmtHM(start)}`;
+              }
 
-              // keep your chips/title UI:
+              // (Keep your chips UI if you want on grid; you can remove chips if you prefer a cleaner month view)
               const progs = (arg.event.extendedProps as any)?.programs as
                 | string[]
                 | undefined;
@@ -322,7 +371,7 @@ export default function CalendarView() {
               const html = `
     <div class="fcgb-event">
       <div class="fcgb-line">
-        <span class="fcgb-time">${timeText}</span>
+        ${timeLabel ? `<span class="fcgb-time">${timeLabel}</span>` : ''}
         <span class="fcgb-title">${arg.event.title}</span>
       </div>
       ${
@@ -473,6 +522,29 @@ export default function CalendarView() {
           .fancy-fc .public-booked .fcgb-line {
             flex-direction: column;
             align-items: flex-start;
+          }
+          /* If an event row has only title (no time label), keep spacing tidy */
+          .fancy-fc .fcgb-line:has(.fcgb-title):not(:has(.fcgb-time)) {
+            gap: 4px;
+          }
+          .fancy-fc .fc-daygrid-event .fcgb-title {
+            white-space: normal; /* allow wrap */
+            line-height: 1.2;
+          }
+
+          /* Mobile: hide FullCalendar's built-in time column in LIST view.
+   We render our own correct label via eventContent. */
+          @media (max-width: 768px) {
+            .fancy-fc .fc-list-event-time {
+              display: none !important;
+            }
+            /* Optional: keep rows cleaner on small screens */
+            .fancy-fc .fc-list-event-dot {
+              opacity: 0.7;
+            }
+            .fancy-fc .fc-list-event-title {
+              white-space: normal;
+            }
           }
         `}</style>
       </div>
