@@ -3,6 +3,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
+import listPlugin from '@fullcalendar/list';
 import type { EventInput } from '@fullcalendar/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -17,13 +18,37 @@ export default function CalendarView() {
     'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'
   >('timeGridWeek');
 
+  // ✅ mobile mode + selected date for the native date picker
+  const [isMobile, setIsMobile] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+
   const calRef = useRef<FullCalendar | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const api = () => calRef.current?.getApi();
 
+  // Mobile detection (matches Tailwind md breakpoint ~768px)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  // Switch views automatically based on screen size
+  useEffect(() => {
+    const cal = api();
+    if (!cal) return;
+    if (isMobile) {
+      setView('timeGridWeek'); // keep state consistent for desktop return
+      cal.changeView('listDay'); // show day list on phones
+    } else {
+      cal.changeView('timeGridWeek'); // your default desktop view
+    }
+  }, [isMobile]);
+
   const onEventClick = useCallback(async (arg: any) => {
-    // If the user is public, the API will 403 and we’ll no-op.
     try {
       const res = await fetch(`/api/bookings/${arg.event.id}`);
       if (!res.ok) return;
@@ -47,16 +72,18 @@ export default function CalendarView() {
     }
   };
 
+  const toDateInputValue = (d: Date) => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
   // ✅ swallow AbortError so rapid navigation doesn't throw
   const fetchRange = useCallback(
     async (start: Date, end: Date, signal: AbortSignal) => {
       try {
-        const url = `/api/events?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(
-          end.toISOString()
-        )}`;
+        const url = `/api/events?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`;
         const res = await fetch(url, { signal });
         const data = await res.json().catch(() => []);
-        // data is an array of EventInput; public items may include classNames: ['public-booked']
         setEvents(Array.isArray(data) ? (data as EventInput[]) : []);
       } catch (err: any) {
         if (err?.name === 'AbortError' || err?.code === 20) return;
@@ -67,7 +94,6 @@ export default function CalendarView() {
   );
 
   useEffect(() => {
-    // Cleanup pending fetch on unmount
     return () => abortRef.current?.abort();
   }, []);
 
@@ -81,12 +107,17 @@ export default function CalendarView() {
 
   const changeView = (v: 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay') => {
     setView(v);
-    api()?.changeView(v); // datesSet below will refetch and update title
+    api()?.changeView(v);
+  };
+
+  const onPickDate = (val: string) => {
+    setSelectedDate(val);
+    if (val) api()?.gotoDate(val); // jumps far ahead easily on mobile
   };
 
   return (
     <section className='section'>
-      <div className='card p-4 md:p-6 relative overflow-hidden'>
+      <div className='card p-4 md:p-6 relative'>
         {/* Header */}
         <div className='mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
           <div>
@@ -96,79 +127,93 @@ export default function CalendarView() {
             </p>
           </div>
 
-          <div className='flex items-center gap-2'>
-            {/* Nav group */}
-            <div className='flex items-center rounded-2xl shadow-sm border border-black/10 overflow-hidden'>
-              <button
-                onClick={() => goto('prev')}
-                className='px-3 py-2 hover:bg-black/5 focus:outline-none'
-                aria-label='Previous'
-              >
-                <svg
-                  width='18'
-                  height='18'
-                  viewBox='0 0 24 24'
-                  className='opacity-70'
-                >
-                  <path
-                    d='M15 18l-6-6 6-6'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2'
-                    strokeLinecap='round'
-                  />
-                </svg>
-              </button>
-              <button
-                onClick={() => goto('today')}
-                className='px-3 py-2 font-medium hover:bg-black/5 focus:outline-none'
-              >
-                Today
-              </button>
-              <button
-                onClick={() => goto('next')}
-                className='px-3 py-2 hover:bg-black/5 focus:outline-none'
-                aria-label='Next'
-              >
-                <svg
-                  width='18'
-                  height='18'
-                  viewBox='0 0 24 24'
-                  className='opacity-70'
-                >
-                  <path
-                    d='M9 6l6 6-6 6'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2'
-                    strokeLinecap='round'
-                  />
-                </svg>
-              </button>
-            </div>
-
-            {/* Segmented view switcher */}
-            <div className='flex items-center rounded-2xl shadow-sm border border-black/10 overflow-hidden'>
-              {[
-                { id: 'dayGridMonth', label: 'Month' },
-                { id: 'timeGridWeek', label: 'Week' },
-                { id: 'timeGridDay', label: 'Day' },
-              ].map(({ id, label }) => (
+          {/* Controls */}
+          {isMobile ? (
+            <div className='flex items-center gap-2'>
+              {/* Day nav */}
+              <div className='flex items-center rounded-2xl shadow-sm border border-black/10 overflow-hidden'>
                 <button
-                  key={id}
-                  onClick={() => changeView(id as any)}
-                  className={[
-                    'px-3 py-2 text-sm font-medium focus:outline-none',
-                    view === id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'hover:bg-black/5',
-                  ].join(' ')}
+                  onClick={() => goto('prev')}
+                  className='px-3 py-2 hover:bg-black/5'
+                  aria-label='Previous day'
                 >
-                  {label}
+                  ‹
                 </button>
-              ))}
+                <button
+                  onClick={() => goto('today')}
+                  className='px-3 py-2 font-medium hover:bg-black/5'
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => goto('next')}
+                  className='px-3 py-2 hover:bg-black/5'
+                  aria-label='Next day'
+                >
+                  ›
+                </button>
+              </div>
+
+              {/* Fast jump: native calendar picker (great on phones) */}
+              <label className='flex items-center gap-2 rounded-2xl border border-black/10 px-3 py-2 text-sm bg-white'>
+                <span className='opacity-70'>Jump</span>
+                <input
+                  type='date'
+                  className='outline-none'
+                  value={selectedDate}
+                  onChange={(e) => onPickDate(e.target.value)}
+                />
+              </label>
             </div>
-          </div>
+          ) : (
+            <div className='flex items-center gap-2'>
+              {/* Nav group */}
+              <div className='flex items-center rounded-2xl shadow-sm border border-black/10 overflow-hidden'>
+                <button
+                  onClick={() => goto('prev')}
+                  className='px-3 py-2 hover:bg-black/5'
+                  aria-label='Previous'
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={() => goto('today')}
+                  className='px-3 py-2 font-medium hover:bg-black/5'
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => goto('next')}
+                  className='px-3 py-2 hover:bg-black/5'
+                  aria-label='Next'
+                >
+                  ›
+                </button>
+              </div>
+
+              {/* Segmented view switcher (desktop only) */}
+              <div className='flex items-center rounded-2xl shadow-sm border border-black/10 overflow-hidden'>
+                {[
+                  { id: 'dayGridMonth', label: 'Month' },
+                  { id: 'timeGridWeek', label: 'Week' },
+                  { id: 'timeGridDay', label: 'Day' },
+                ].map(({ id, label }) => (
+                  <button
+                    key={id}
+                    onClick={() => changeView(id as any)}
+                    className={[
+                      'px-3 py-2 text-sm font-medium focus:outline-none',
+                      view === id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'hover:bg-black/5',
+                    ].join(' ')}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Loading overlay */}
@@ -181,13 +226,18 @@ export default function CalendarView() {
         {/* Calendar */}
         <div className='fancy-fc'>
           <FullCalendar
-            eventClick={onEventClick}
             ref={calRef as any}
-            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-            initialView={view}
+            plugins={[
+              dayGridPlugin,
+              timeGridPlugin,
+              listPlugin,
+              interactionPlugin,
+            ]}
+            initialView={'timeGridWeek'} // desktop default; we switch to 'listDay' in effect on phones
             headerToolbar={false}
             timeZone='local'
-            height={720}
+            height={isMobile ? 'auto' : 720} // list view should size to content on mobile
+            contentHeight={isMobile ? 'auto' : undefined}
             expandRows
             stickyHeaderDates
             weekends
@@ -195,6 +245,7 @@ export default function CalendarView() {
             allDaySlot
             dayMaxEvents
             dayMaxEventRows
+            eventClick={onEventClick}
             slotLabelFormat={{
               hour: '2-digit',
               minute: '2-digit',
@@ -208,7 +259,7 @@ export default function CalendarView() {
             loading={(isLoading) => setLoading(isLoading)}
             datesSet={(arg) => {
               setTitle(arg.view.title);
-              // cancel previous request and start a new one
+              if (isMobile) setSelectedDate(toDateInputValue(arg.start));
               abortRef.current?.abort();
               const ac = new AbortController();
               abortRef.current = ac;
@@ -216,26 +267,73 @@ export default function CalendarView() {
             }}
             events={events}
             eventContent={(arg) => {
+              // helpers
+              const fmtHM = (d: Date) =>
+                d.toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false,
+                });
+              const fmtMD = (d: Date) =>
+                d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+              const start = arg.event.start!;
+              const end = arg.event.end ?? null;
+
+              // detect multi-day
+              const isMultiDay =
+                !!end &&
+                (end.getFullYear() !== start.getFullYear() ||
+                  end.getMonth() !== start.getMonth() ||
+                  end.getDate() !== start.getDate());
+
+              // compute days spanned (rounded)
+              const days = end
+                ? Math.max(
+                    1,
+                    Math.round((end.getTime() - start.getTime()) / 86400000)
+                  )
+                : 0;
+
+              // Build our own time text (don’t use arg.timeText)
+              let timeText = '';
+              if (isMultiDay) {
+                // Example: "Oct 12 10:00 → Oct 14 10:00 (2 days)"
+                timeText = `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end!)} ${fmtHM(end!)} (${days} day${days > 1 ? 's' : ''})`;
+              } else if (end) {
+                // Same-day timed event
+                timeText = `${fmtHM(start)} – ${fmtHM(end)}`;
+              } else {
+                // No explicit end
+                timeText = fmtHM(start);
+              }
+
+              // (Optional) If you want special wording for Akhand Path only:
+              // const isAkhand = (arg.event.extendedProps as any)?.programType === 'AKHAND_PATH';
+              // if (isAkhand && isMultiDay) timeText += ' • Akhand Path';
+
+              // keep your chips/title UI:
               const progs = (arg.event.extendedProps as any)?.programs as
                 | string[]
                 | undefined;
               const chips = (progs ?? []).slice(0, 3);
               const more = (progs?.length ?? 0) - chips.length;
+
               const html = `
-                <div class="fcgb-event">
-                  <div class="fcgb-line">
-                    <span class="fcgb-time">${arg.timeText || ''}</span>
-                    <span class="fcgb-title">${arg.event.title}</span>
-                  </div>
-                  ${
-                    chips.length
-                      ? `<div class="fcgb-chips">
-                          ${chips.map((c) => `<span class="fcgb-chip">${c}</span>`).join('')}
-                          ${more > 0 ? `<span class="fcgb-chip fcgb-chip-more">+${more}</span>` : ''}
-                        </div>`
-                      : ''
-                  }
-                </div>`;
+    <div class="fcgb-event">
+      <div class="fcgb-line">
+        <span class="fcgb-time">${timeText}</span>
+        <span class="fcgb-title">${arg.event.title}</span>
+      </div>
+      ${
+        chips.length
+          ? `<div class="fcgb-chips">
+               ${chips.map((c) => `<span class="fcgb-chip">${c}</span>`).join('')}
+               ${more > 0 ? `<span class="fcgb-chip fcgb-chip-more">+${more}</span>` : ''}
+             </div>`
+          : ''
+      }
+    </div>`;
               return { html };
             }}
           />
@@ -250,10 +348,12 @@ export default function CalendarView() {
             --fc-button-text-color: rgb(17, 24, 39);
             --fc-today-bg-color: rgba(59, 130, 246, 0.08);
             --fc-now-indicator-color: #ef4444;
-            --fc-event-text-color: white;
+            --fc-event-text-color: rgb(17, 24, 39);
             --fc-event-bg-color: #2563eb;
             --fc-event-border-color: #1d4ed8;
           }
+
+          /* Grid views */
           .fancy-fc .fc {
             font-size: 0.95rem;
           }
@@ -261,32 +361,32 @@ export default function CalendarView() {
             padding: 0.5rem 0.25rem;
             font-weight: 600;
           }
-          .fancy-fc .fc-timegrid-slot-label,
-          .fancy-fc .fc-daygrid-day-number {
-            color: rgb(107, 114, 128);
-          }
-
-          /* Today highlight */
           .fancy-fc .fc-day-today {
             background: var(--fc-today-bg-color) !important;
           }
-
-          /* Event styling */
           .fancy-fc .fc-event {
             border-radius: 0.75rem;
             box-shadow: 0 4px 12px rgba(2, 6, 23, 0.1);
             border: 1px solid var(--fc-event-border-color);
-            overflow: visible; /* ensure chips not clipped */
-          }
-          .fancy-fc .fc-timegrid-event .fc-event {
             overflow: visible;
           }
-
           .fancy-fc .fc-event:hover {
             filter: brightness(1.02);
             box-shadow: 0 6px 18px rgba(2, 6, 23, 0.16);
           }
+          .fancy-fc .fc-daygrid-event {
+            margin: 2px 6px;
+          }
+          .fancy-fc .fc-popover {
+            z-index: 60 !important;
+            box-shadow: 0 10px 30px rgba(2, 6, 23, 0.18);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 0.75rem;
+            background-color: #fff !important;
+            backdrop-filter: none !important;
+          }
 
+          /* Custom content (grid) */
           .fancy-fc .fcgb-event {
             padding: 0 8px;
           }
@@ -308,7 +408,6 @@ export default function CalendarView() {
             overflow: hidden;
             text-overflow: ellipsis;
           }
-
           .fancy-fc .fcgb-chips {
             margin-top: 2px;
             display: flex;
@@ -329,28 +428,40 @@ export default function CalendarView() {
             background: rgba(255, 255, 255, 0.14);
           }
 
-          .fancy-fc .fc-daygrid-event {
-            margin: 2px 6px;
+          /* List view (mobile) */
+          .fancy-fc .fc-list-empty {
+            padding: 1rem;
+            color: rgb(107, 114, 128);
           }
-          .fancy-fc .fc-popover {
+          .fancy-fc .fc-list,
+          .fancy-fc .fc-list-table {
             border-radius: 0.75rem;
+            overflow: hidden;
             border: 1px solid rgba(0, 0, 0, 0.08);
-            box-shadow: 0 10px 30px rgba(2, 6, 23, 0.18);
+          }
+          .fancy-fc .fc-list-day-cushion {
+            font-weight: 600;
+          }
+          .fancy-fc .fcgb-list {
+            display: flex;
+            gap: 8px;
+            align-items: baseline;
+          }
+          .fancy-fc .fcgb-list .fcgb-time {
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            opacity: 0.95;
+          }
+          .fancy-fc .fcgb-list .fcgb-title {
+            font-weight: 600;
           }
 
-          /* Optional: tiny extra breathing room to reduce chance of visual clipping */
-          .fancy-fc .fc-timegrid-event-harness {
-            padding: 1px 0;
-          }
-        `}</style>
-
-        {/* Public view: grey-out booked slots */}
-        <style jsx global>{`
+          /* Public greyed events stay readable */
           .fancy-fc .public-booked,
           .fancy-fc .public-booked.fc-daygrid-event,
           .fancy-fc .public-booked.fc-timegrid-event {
-            background: rgba(107, 114, 128, 0.18); /* gray-500 @ ~18% */
-            color: rgba(31, 41, 55, 0.95); /* gray-800 */
+            background: rgba(107, 114, 128, 0.18);
+            color: rgba(31, 41, 55, 0.95);
             border-color: rgba(0, 0, 0, 0.08);
           }
           .fancy-fc .public-booked .fcgb-chip {
@@ -361,11 +472,12 @@ export default function CalendarView() {
           }
           .fancy-fc .public-booked .fcgb-line {
             flex-direction: column;
-            align-items: flex-start; /* keeps left alignment */
+            align-items: flex-start;
           }
         `}</style>
       </div>
 
+      {/* Detail Modal */}
       {detailOpen && detail && (
         <div className='fixed inset-0 z-50 flex items-center justify-center p-4'>
           <div
