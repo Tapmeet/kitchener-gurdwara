@@ -245,7 +245,7 @@ async function main() {
 
   // Sukhmani Sahib Path + Kirtan (2.5h; Path 1.5h → Kirtan 1h)
   await upsertProgram('Sukhmani Sahib Path + Kirtan', ProgramCategory.PATH, {
-    durationMinutes: 150,
+    durationMinutes: 120,
     peopleRequired: 3, // max concurrent heads during Kirtan window
     minPathers: 1,
     minKirtanis: 0, // trailingKirtan drives the jatha
@@ -287,7 +287,7 @@ async function main() {
 
   // Alania Da Path + Kirtan (2h total; Path 1h → Kirtan 1h)
   await upsertProgram(
-    'Alania Da Path (Antim Ardas) + Kirtan',
+    'Antim Ardas (Alania Da Path) + Kirtan',
     ProgramCategory.PATH,
     {
       durationMinutes: 120,
