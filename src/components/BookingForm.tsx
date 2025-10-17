@@ -554,23 +554,6 @@ export default function BookingForm() {
 
   return (
     <section className='section'>
-      {/* Turnstile (client-only; renders after mount to keep SSR/CSR identical) */}
-      {mounted && TURNSTILE_SITE_KEY ? (
-        <>
-          <Script
-            src='https://challenges.cloudflare.com/turnstile/v0/api.js'
-            async
-            defer
-          />
-          <div
-            className='cf-turnstile mb-4'
-            data-sitekey={TURNSTILE_SITE_KEY}
-            data-callback='onTurnstileSuccess'
-            suppressHydrationWarning
-          />
-        </>
-      ) : null}
-
       {/* Floating toast (no layout shift) */}
       <div aria-live='polite' aria-atomic='true'>
         {success && (
@@ -1003,6 +986,23 @@ export default function BookingForm() {
               />
             </div>
             <div className='flex items-end mb-2'>
+              {/* Turnstile (client-only; renders after mount to keep SSR/CSR identical) */}
+              {mounted && TURNSTILE_SITE_KEY ? (
+                <>
+                  <Script
+                    src='https://challenges.cloudflare.com/turnstile/v0/api.js'
+                    async
+                    defer
+                  />
+                  <div
+                    className='cf-turnstile mb-4'
+                    data-sitekey={TURNSTILE_SITE_KEY}
+                    data-callback='onTurnstileSuccess'
+                    suppressHydrationWarning
+                  />
+                </>
+              ) : null}
+
               <button
                 className={[
                   'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
