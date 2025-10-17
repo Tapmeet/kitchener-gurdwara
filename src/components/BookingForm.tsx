@@ -1002,30 +1002,27 @@ export default function BookingForm() {
                   />
                 </>
               ) : null}
-
-              <button
-                className={[
-                  'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
-                  'relative overflow-hidden border border-white/15',
-                  'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
-                  'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  submitting || isLoadingAvail || !canSubmit
-                    ? 'opacity-70'
-                    : '',
-                ].join(' ')}
-                disabled={submitting || isLoadingAvail || !canSubmit || !date}
-                type='submit'
-                aria-busy={submitting || isLoadingAvail}
-              >
-                {submitting
-                  ? 'Submitting…'
-                  : isLoadingAvail
-                    ? 'Checking availability…'
-                    : 'Create Booking'}
-              </button>
             </div>
+            <button
+              className={[
+                'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
+                'relative overflow-hidden border border-white/15',
+                'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
+                'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                submitting || isLoadingAvail || !canSubmit ? 'opacity-70' : '',
+              ].join(' ')}
+              disabled={submitting || isLoadingAvail || !canSubmit || !date}
+              type='submit'
+              aria-busy={submitting || isLoadingAvail}
+            >
+              {submitting
+                ? 'Submitting…'
+                : isLoadingAvail
+                  ? 'Checking availability…'
+                  : 'Create Booking'}
+            </button>
           </div>
         </form>
       </div>
