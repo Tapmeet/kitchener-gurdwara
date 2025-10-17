@@ -1,3 +1,9 @@
+//src/app/api/bookings/[id]/proposed-assignments/route.ts
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
@@ -72,5 +78,10 @@ export async function GET(
     });
   }
 
-  return NextResponse.json({ bookingId: booking.id, assignments: out });
+  return NextResponse.json(
+    { bookingId: booking.id, assignments: out },
+    {
+      headers: { 'Cache-Control': 'no-store' },
+    }
+  );
 }

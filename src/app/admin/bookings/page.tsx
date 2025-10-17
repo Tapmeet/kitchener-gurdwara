@@ -5,6 +5,9 @@ import { format } from 'date-fns';
 import { ApproveButtons } from './parts';
 import ReviewProposed from '@/components/admin/ReviewProposed';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 function fmt(d: Date) {
   try {
     return format(d, 'EEE, MMM d yyyy, h:mm a');

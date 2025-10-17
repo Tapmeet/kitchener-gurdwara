@@ -1,7 +1,8 @@
 // src/app/api/bookings/[id]/auto-assign/route.ts
 
 export const runtime = 'nodejs';
-
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { autoAssignForBooking } from '@/lib/auto-assign';
@@ -29,7 +30,10 @@ export async function POST(
         }))
       );
     }
-    return NextResponse.json({ ok: true, ...res });
+    return NextResponse.json(
+      { ok: true, ...res },
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
   } catch (e: any) {
     console.error('Manual auto-assign failed', e);
     return NextResponse.json({ error: 'Auto-assign failed' }, { status: 500 });

@@ -13,7 +13,6 @@ export function ApproveButtons({ id }: { id: string }) {
     try {
       const res = await fetch(url, { method: 'POST' });
       if (!res.ok) {
-        // try json, then text for clearer errors
         let msg = 'Request failed';
         try {
           const j = await res.json();
@@ -24,24 +23,23 @@ export function ApproveButtons({ id }: { id: string }) {
         alert(msg);
         return;
       }
+
+      router.refresh();
     } finally {
       setBusy(null);
-      router.refresh();
     }
   }
 
   return (
     <div className='flex gap-2'>
-      {/* IMPORTANT: call /approve (not /confirm) */}
       <button
-        onClick={() => doPost(`/api/bookings/${id}/approve`, 'approve')}
+        onClick={() => doPost(`/api/bookings/${id}/confirm`, 'approve')}
         className='btn btn-primary btn-sm'
         disabled={busy !== null}
       >
         {busy === 'approve' ? 'Approving…' : 'Approve'}
       </button>
 
-      {/* Keep cancel if you have this route; otherwise remove or add it (see below) */}
       <button
         onClick={() => doPost(`/api/bookings/${id}/cancel`, 'cancel')}
         className='btn btn-ghost btn-sm'

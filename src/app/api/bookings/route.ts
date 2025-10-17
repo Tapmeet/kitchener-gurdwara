@@ -1,5 +1,9 @@
 // src/app/api/bookings/route.ts
+
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { CreateBookingSchema } from '@/lib/validation';
@@ -780,5 +784,5 @@ export async function GET(req: Request) {
     },
   });
 
-  return NextResponse.json(data);
+  return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -1,6 +1,8 @@
 // src/app/api/bookings/[id]/assignments/route.ts
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
@@ -27,7 +29,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<Params> }) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
 
-    return NextResponse.json(booking);
+    return NextResponse.json(booking, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message ?? 'Unexpected error' },
