@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { CreateBookingSchema } from '@/lib/validation';
 import {
+  VENUE_TZ,
   isWithinBusinessHours,
   hourSpan,
   BUSINESS_HOURS_24,
@@ -42,7 +43,13 @@ function rateLimit(key: string, limit = 10, windowMs = 60_000) {
   return false;
 }
 
-function isBusinessStartHour(h: number) {
+function isBusinessStartHourTZ(d: Date) {
+  const hourStr = new Intl.DateTimeFormat('en-CA', {
+    hour: '2-digit',
+    hour12: false,
+    timeZone: VENUE_TZ,
+  }).format(d);
+  const h = parseInt(hourStr, 10);
   const start = Math.min(...BUSINESS_HOURS_24);
   const end = Math.max(...BUSINESS_HOURS_24) + 1;
   return h >= start && h < end;
@@ -84,10 +91,12 @@ function toLocalParts(input: Date | string | number) {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    timeZone: VENUE_TZ,
   });
   const time = d.toLocaleTimeString(undefined, {
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: VENUE_TZ,
   });
   return { date, time };
 }
@@ -260,19 +269,16 @@ export async function POST(req: Request) {
     // - Normal: start+end must be within business hours (existing util).
     // - Long path: only enforce that the *start* is a business-hour.
     if (!isLongPath) {
-      const bh = isWithinBusinessHours(start, end) as
-        | boolean
-        | { ok: boolean; error?: string };
-      const bhOk = typeof bh === 'boolean' ? bh : bh.ok;
-      if (!bhOk) {
-        const reason =
-          typeof bh === 'object' && 'error' in bh && bh.error
-            ? bh.error
-            : 'Outside business hours';
-        return NextResponse.json({ error: reason }, { status: 400 });
+      const bh = isWithinBusinessHours(start, end, VENUE_TZ);
+      if (!bh.ok) {
+        return NextResponse.json(
+          { error: bh.error ?? 'Outside business hours' },
+          { status: 400 }
+        );
       }
     } else {
-      if (!isBusinessStartHour(start.getHours())) {
+      // long pure-PATH: only enforce that the *start* falls in business hours, in venue TZ
+      if (!isBusinessStartHourTZ(start)) {
         return NextResponse.json(
           { error: 'Start time must be during business hours (7:00–19:00).' },
           { status: 400 }
