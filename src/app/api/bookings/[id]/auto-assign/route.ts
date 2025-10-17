@@ -1,8 +1,11 @@
+// src/app/api/bookings/[id]/auto-assign/route.ts
+
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
-// import { checkStaffCapacity } from '@/lib/staff-capacity'; // (optional) remove if unused
 
 export async function POST(
   req: Request,

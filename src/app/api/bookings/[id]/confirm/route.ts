@@ -1,4 +1,7 @@
 // src/app/api/bookings/[id]/confirm/route.ts
+
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
@@ -39,8 +42,8 @@ export async function POST(
         }))
       );
     }
-  } catch {
-    // best-effort: swallow errors so approval still succeeds
+  } catch (e) {
+    console.error('Auto-assign in confirm failed', e);
   }
 
   return NextResponse.json({ ok: true, id: updated.id });

@@ -974,55 +974,59 @@ export default function BookingForm() {
 
           {/* Notes & Submit */}
           <div className='grid gap-4 md:grid-cols-[1fr_auto]'>
-            <div>
+            <div className='flex flex-col'>
               <label className='label' htmlFor='notes'>
                 Any other information?
               </label>
               <textarea
                 id='notes'
-                className='textarea'
                 name='notes'
                 placeholder='Anything else we should know or any request/clarifications?'
+                className='textarea h-[7rem]'
               />
             </div>
-            <div className='flex items-end mb-2'>
-              {/* Turnstile (client-only; renders after mount to keep SSR/CSR identical) */}
-              {mounted && TURNSTILE_SITE_KEY ? (
-                <>
+            <div className='flex flex-col self-stretch h-full justify-end'>
+              <div className='flex'>
+                <div className='ml-auto w-full sm:w-[260px] md:w-[300px]'>
                   <Script
                     src='https://challenges.cloudflare.com/turnstile/v0/api.js'
                     async
                     defer
                   />
                   <div
-                    className='cf-turnstile mb-4'
+                    className='cf-turnstile w-full'
                     data-sitekey={TURNSTILE_SITE_KEY}
+                    data-size='flexible'
                     data-callback='onTurnstileSuccess'
                     suppressHydrationWarning
                   />
-                </>
-              ) : null}
+                </div>
+              </div>
+              <div>
+                <button
+                  type='submit'
+                  aria-busy={submitting || isLoadingAvail}
+                  disabled={submitting || isLoadingAvail || !canSubmit || !date}
+                  className={[
+                    'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
+                    'relative overflow-hidden border border-white/15',
+                    'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
+                    'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
+                    'disabled:opacity-50 disabled:cursor-not-allowed',
+                    submitting || isLoadingAvail || !canSubmit
+                      ? 'opacity-70'
+                      : '',
+                  ].join(' ')}
+                >
+                  {submitting
+                    ? 'Submitting…'
+                    : isLoadingAvail
+                      ? 'Checking availability…'
+                      : 'Create Booking'}
+                </button>
+              </div>
             </div>
-            <button
-              className={[
-                'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
-                'relative overflow-hidden border border-white/15',
-                'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
-                'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
-                submitting || isLoadingAvail || !canSubmit ? 'opacity-70' : '',
-              ].join(' ')}
-              disabled={submitting || isLoadingAvail || !canSubmit || !date}
-              type='submit'
-              aria-busy={submitting || isLoadingAvail}
-            >
-              {submitting
-                ? 'Submitting…'
-                : isLoadingAvail
-                  ? 'Checking availability…'
-                  : 'Create Booking'}
-            </button>
           </div>
         </form>
       </div>
