@@ -1,61 +1,57 @@
 // src/app/api/housekeeping/expire-pending/route.ts
-export const runtime = 'nodejs';
-
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-// Use a 2-int advisory lock key to avoid BigInt quirks in JS
-const LOCK_KEY_A = 424242;
-const LOCK_KEY_B = 777;
-
-async function doWork() {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-  // Try to acquire the lock so only one run executes at a time
-  const res = await prisma.$queryRaw<{ pg_try_advisory_lock: boolean }[]>`
-    SELECT pg_try_advisory_lock(${LOCK_KEY_A}, ${LOCK_KEY_B})
-  `;
-  const gotLock = res?.[0]?.pg_try_advisory_lock === true;
-
-  if (!gotLock) {
-    return {
-      ok: true,
-      skipped: true,
-      reason: 'Another run is in progress',
-      expired: 0,
-    };
-  }
-
-  try {
-    const expired = await prisma.booking.updateMany({
-      where: { status: 'PENDING', createdAt: { lt: cutoff } },
-      data: { status: 'EXPIRED' },
-    });
-    return { ok: true, expired: expired.count };
-  } finally {
-    // Always release the lock
-    await prisma.$executeRaw`
-      SELECT pg_advisory_unlock(${LOCK_KEY_A}, ${LOCK_KEY_B})
-    `;
-  }
-}
+const LOCK_KEY = '9223372036854775707'; // keep as string, cast to ::bigint in SQL
 
 export async function POST() {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
   try {
-    const result = await doWork();
-    return NextResponse.json(result);
-  } catch (e: any) {
-    // Handle Prisma pool exhaustion gracefully
-    if (e?.code === 'P2024') {
+    const result = await prisma.$transaction(async (tx) => {
+      // Transaction-scoped advisory lock; auto-released at tx end.
+      const rows = await tx.$queryRaw<{ ok: boolean }[]>`
+        SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS ok
+      `;
+      const ok = rows[0]?.ok === true;
+
+      if (!ok) {
+        // Somebody else is already running housekeeping
+        return { locked: true, expired: 0 };
+      }
+
+      const expired = await tx.booking.updateMany({
+        where: { status: 'PENDING', createdAt: { lt: cutoff } },
+        data: { status: 'EXPIRED' },
+      });
+
+      return { locked: false, expired: expired.count };
+    });
+
+    // If locked, return 409 so callers can back off
+    if (result.locked) {
       return NextResponse.json(
-        { ok: false, expired: 0, error: 'DB pool exhausted (P2024)' },
-        { status: 503 }
+        { ok: true, locked: true, expired: 0 },
+        { status: 409 }
       );
     }
-    throw e;
+
+    return NextResponse.json({
+      ok: true,
+      locked: false,
+      expired: result.expired,
+    });
+  } catch (err) {
+    console.error('expire-pending failed', err);
+    return NextResponse.json(
+      { ok: false, error: 'Housekeeping failed' },
+      { status: 500 }
+    );
   }
 }
 
 export async function GET() {
   return POST();
 }
+
+export const runtime = 'nodejs';
