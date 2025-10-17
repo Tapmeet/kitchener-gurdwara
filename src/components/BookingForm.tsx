@@ -17,7 +17,6 @@ interface ProgramType {
   name: string;
   category: ProgramCategory;
   durationMinutes: number;
-  // optional: if /api/program-types includes minKirtanis, we can use it for the jatha hint
   minKirtanis?: number;
 }
 
@@ -51,7 +50,6 @@ const FRIENDLY: Record<FieldKey | 'start' | 'end' | 'items', string> = {
   contactName: 'Please enter your name.',
   contactPhone: 'Please enter a phone number.',
   hallId: 'No hall fits this many people.',
-  // schema/server aliases:
   start: 'Please choose a time.',
   end: 'Please choose a time.',
   items: 'Please choose a program.',
@@ -117,7 +115,7 @@ function computeEndPreview(
   startHour24: number,
   durationMinutes: number
 ) {
-  if (!durationMinutes) return null;
+  if (!durationMinutes || !dateStr) return null; // guard until date is mounted
   const [y, m, d] = dateStr.split('-').map(Number);
   const start = new Date(y, (m ?? 1) - 1, d ?? 1, startHour24, 0, 0, 0); // local time
   const end = new Date(start.getTime() + durationMinutes * MS_PER_MIN);
@@ -160,7 +158,7 @@ declare global {
     onTurnstileSuccess?: (token: string) => void;
   }
 }
-const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '';
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
 
 /* ---------- component ---------- */
 
@@ -173,13 +171,19 @@ export default function BookingForm() {
   const [phone, setPhone] = useState<string>('');
   const [locationType, setLocationType] = useState<LocationType>('');
 
-  // Date + time
-  const now = useMemo(() => new Date(), []);
-  const [date, setDate] = useState(toLocalDateString(now));
-  const [startHour24, setStartHour24] = useState<number>(() => {
-    const h = now.getHours();
-    return h < 7 || h > 19 ? 7 : h;
-  });
+  // Mount flag to keep initial SSR/CSR markup identical
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Date + time (set after mount to avoid SSR/CSR clock differences)
+  const [date, setDate] = useState<string>(''); // empty on SSR & first client render
+  const [startHour24, setStartHour24] = useState<number>(7);
+  useEffect(() => {
+    const n = new Date();
+    setDate(toLocalDateString(n));
+    const h = n.getHours();
+    setStartHour24(h < 7 || h > 19 ? 7 : h);
+  }, []);
 
   // Program: SINGLE-SELECT
   const [selectedProgramId, setSelectedProgramId] = useState<string>('');
@@ -207,8 +211,6 @@ export default function BookingForm() {
   const [availableHours, setAvailableHours] = useState<number[]>([]);
   const [availableMap, setAvailableMap] = useState<Record<number, boolean>>({});
   const [isLoadingAvail, setIsLoadingAvail] = useState(false);
-  // (Optional) which hall would be picked per hour (id)
-  // const [hallByHour, setHallByHour] = useState<Record<number, string | null>>({});
 
   // Turnstile token
   const [turnstileToken, setTurnstileToken] = useState<string>('');
@@ -219,7 +221,7 @@ export default function BookingForm() {
     };
   }, []);
 
-  // End-time preview (shows proper date for multi-day programs like Akhand Path)
+  // End-time preview
   const endLabel = useMemo(() => {
     return computeEndPreview(date, startHour24, durationMinutes);
   }, [date, startHour24, durationMinutes]);
@@ -236,11 +238,10 @@ export default function BookingForm() {
 
   // Fetch availability (server computes hall feasibility too)
   useEffect(() => {
-    if (!selectedProgramKey || !locationType) {
+    if (!selectedProgramKey || !locationType || !date) {
       setAvailableHours([]);
       setAvailableMap({});
       setIsLoadingAvail(false);
-      // setHallByHour({});
       return;
     }
 
@@ -255,7 +256,6 @@ export default function BookingForm() {
     let aborted = false;
 
     setIsLoadingAvail(true);
-    // clear current map to avoid showing stale state while fetching
     setAvailableMap({});
     setAvailableHours([]);
 
@@ -265,13 +265,11 @@ export default function BookingForm() {
         if (aborted) return;
         setAvailableHours(Array.isArray(j.hours) ? j.hours : []);
         setAvailableMap(j.availableByHour || {});
-        // setHallByHour(j.hallByHour || {});
       })
       .catch(() => {
         if (aborted) return;
         setAvailableHours([]);
         setAvailableMap({});
-        // setHallByHour({});
       })
       .finally(() => {
         if (!aborted) setIsLoadingAvail(false);
@@ -282,7 +280,7 @@ export default function BookingForm() {
     };
   }, [date, selectedProgramKey, locationType, attendees]);
 
-  // Keep selected start hour valid (choose first available if current becomes unavailable)
+  // Keep selected start hour valid
   useEffect(() => {
     const minHour = minSelectableHour24(date);
     const allList = BUSINESS_HOURS_24.filter((h) => h >= minHour);
@@ -292,7 +290,7 @@ export default function BookingForm() {
     }
   }, [availableMap, date, startHour24]);
 
-  // Count how many selectable (not greyed out) times exist for the current date
+  // Count how many selectable times exist
   const allowedTimesCount = useMemo(() => {
     const minHour = minSelectableHour24(date);
     const list = BUSINESS_HOURS_24.filter((h) => h >= minHour);
@@ -315,7 +313,7 @@ export default function BookingForm() {
   const titleRef = useRef<HTMLInputElement | null>(null);
   const locationTypeRef = useRef<HTMLSelectElement | null>(null);
   const attendeesRef = useRef<HTMLInputElement | null>(null);
-  const programTypeRef = useRef<HTMLInputElement | null>(null); // first radio
+  const programTypeRef = useRef<HTMLInputElement | null>(null);
   const dateRef = useRef<HTMLInputElement | null>(null);
   const startHour24Ref = useRef<HTMLSelectElement | null>(null);
   const contactNameRef = useRef<HTMLInputElement | null>(null);
@@ -394,16 +392,21 @@ export default function BookingForm() {
     setErrors({});
     setSuccess(null);
     setLocationType('');
-    const n = new Date();
-    setDate(toLocalDateString(n));
+    setDate('');
     setStartHour24(7);
     setPhone('');
     setSelectedProgramId('');
     setAvailableHours([]);
     setAvailableMap({});
-    // setHallByHour({});
     setAttendees('');
     if (form) form.reset();
+    // set date/time again after reset on mount tick
+    setTimeout(() => {
+      const n = new Date();
+      setDate(toLocalDateString(n));
+      const h = n.getHours();
+      setStartHour24(h < 7 || h > 19 ? 7 : h);
+    }, 0);
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -439,7 +442,9 @@ export default function BookingForm() {
       availableMap[startHour24] === true ||
       (availableHours.length > 0 && availableHours.includes(startHour24));
 
-    if (isPast) {
+    if (!date) {
+      nextErrors.date = FRIENDLY.date;
+    } else if (isPast) {
       nextErrors.startHour24 =
         'That time has already passed. Pick a later time.';
     } else if (slotKnown && !slotAvailable) {
@@ -470,7 +475,6 @@ export default function BookingForm() {
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      // hallId not sent; server auto-picks/validates
       address:
         loc === 'OUTSIDE_GURDWARA'
           ? String(fd.get('address') || '').trim() || null
@@ -550,8 +554,8 @@ export default function BookingForm() {
 
   return (
     <section className='section'>
-      {/* Turnstile (optional, only renders if site key provided) */}
-      {TURNSTILE_SITE_KEY && (
+      {/* Turnstile (client-only; renders after mount to keep SSR/CSR identical) */}
+      {mounted && TURNSTILE_SITE_KEY ? (
         <>
           <Script
             src='https://challenges.cloudflare.com/turnstile/v0/api.js'
@@ -562,9 +566,10 @@ export default function BookingForm() {
             className='cf-turnstile mb-4'
             data-sitekey={TURNSTILE_SITE_KEY}
             data-callback='onTurnstileSuccess'
+            suppressHydrationWarning
           />
         </>
-      )}
+      ) : null}
 
       {/* Floating toast (no layout shift) */}
       <div aria-live='polite' aria-atomic='true'>
@@ -579,6 +584,7 @@ export default function BookingForm() {
           </div>
         )}
       </div>
+
       <div className='card p-4 md:p-6'>
         <h2 className='text-lg font-semibold mb-4'>
           Create a Path/Kirtan Booking
@@ -777,6 +783,7 @@ export default function BookingForm() {
                   required
                   aria-invalid={!!errors.date}
                   aria-describedby={errors.date ? 'err-date' : undefined}
+                  suppressHydrationWarning
                 />
                 {errors.date && (
                   <p id='err-date' className='text-xs text-red-600 mt-1'>
@@ -823,7 +830,10 @@ export default function BookingForm() {
                     clearFieldError('startHour24');
                   }}
                   disabled={
-                    isLoadingAvail || !selectedProgramId || !locationType
+                    isLoadingAvail ||
+                    !selectedProgramId ||
+                    !locationType ||
+                    !date
                   }
                   aria-busy={isLoadingAvail}
                   aria-invalid={!!errors.startHour24}
@@ -856,9 +866,7 @@ export default function BookingForm() {
                           availableMap[h24] === true ||
                           (availableHours.length > 0 &&
                             availableHours.includes(h24));
-                        const label = `${h12}:00 ${ap}${
-                          isAvailable ? '' : ' — unavailable'
-                        }`;
+                        const label = `${h12}:00 ${ap}${isAvailable ? '' : ' — unavailable'}`;
                         return (
                           <option key={h24} value={h24} disabled={!isAvailable}>
                             {label}
@@ -997,22 +1005,17 @@ export default function BookingForm() {
             <div className='flex items-end mb-2'>
               <button
                 className={[
-                  // base
                   'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
-                  // gradient + blur + subtle border (matches header vibe)
                   'relative overflow-hidden border border-white/15',
                   'bg-gradient-to-b from-blue-900/80 to-blue-900/60 backdrop-blur',
-                  // interactions
                   'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
-                  // disabled
                   'disabled:opacity-50 disabled:cursor-not-allowed',
-                  // keep your previous opacity tweak
                   submitting || isLoadingAvail || !canSubmit
                     ? 'opacity-70'
                     : '',
                 ].join(' ')}
-                disabled={submitting || isLoadingAvail || !canSubmit}
+                disabled={submitting || isLoadingAvail || !canSubmit || !date}
                 type='submit'
                 aria-busy={submitting || isLoadingAvail}
               >
