@@ -3,8 +3,11 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { formatInTimeZone } from 'date-fns-tz';
+import { Prisma } from '@prisma/client';
+import { VENUE_TZ } from '@/lib/businessHours';
 
-const TZ = process.env.NEXT_PUBLIC_TIMEZONE || 'America/Toronto';
+const TZ = VENUE_TZ;
+
 function fmt(d: Date, pattern = 'EEE, MMM d yyyy, h:mm a') {
   try {
     return formatInTimeZone(d, TZ, pattern);
@@ -30,16 +33,22 @@ export default async function MyBookingsPage() {
   const email = session.user.email ?? null;
   const userId = (session.user as any)?.id ?? null;
 
-  // Bookings created by me OR where I'm the contact (case-insensitive)
+  // Build a properly typed OR array to avoid union widening
+  const orFilters: Prisma.BookingWhereInput[] = [];
+  if (userId) {
+    orFilters.push({ createdById: userId as string });
+  }
+  if (email) {
+    orFilters.push({
+      contactEmail: {
+        equals: email,
+        mode: Prisma.QueryMode.insensitive, // or: 'insensitive' as const
+      },
+    });
+  }
+
   const bookings = await prisma.booking.findMany({
-    where: {
-      OR: [
-        ...(userId ? [{ createdById: userId }] : []),
-        ...(email
-          ? [{ contactEmail: { equals: email, mode: 'insensitive' } }]
-          : []),
-      ],
-    },
+    where: orFilters.length ? { OR: orFilters } : {},
     include: {
       hall: true,
       items: { include: { programType: true } },
@@ -62,8 +71,8 @@ export default async function MyBookingsPage() {
     );
   }
 
+  // Classification uses absolute time; formatting uses TZ for display
   const now = new Date();
-
   const isLive = (status: string) => !['CANCELLED', 'EXPIRED'].includes(status);
 
   const inProgress = bookings
