@@ -11,28 +11,18 @@ import {
   startOfMonth,
   endOfMonth,
 } from 'date-fns';
-import { formatInTimeZone } from 'date-fns-tz';
 import Link from 'next/link';
+import {
+  fmtInVenue,
+  fmtRange,
+  DATE_FMT,
+  DATE_TIME_FMT,
+  MONTH_FMT,
+} from '@/lib/time';
 
 // ---------- types ----------
 type Role = 'PATH' | 'KIRTAN';
 type Jatha = 'A' | 'B';
-
-// Use one deterministic timezone everywhere we render dates
-const TZ = process.env.NEXT_PUBLIC_TIMEZONE || 'America/Toronto';
-
-// Stable formatter for any Date/string/number
-function fmtDate(
-  d: Date | string | number,
-  pattern = 'EEE, MMM d yyyy, h:mm a'
-) {
-  try {
-    const date = d instanceof Date ? d : new Date(d);
-    return formatInTimeZone(date, TZ, pattern);
-  } catch {
-    return new Date(d as any).toString();
-  }
-}
 
 function isAdminRole(role?: string | null) {
   return role === 'ADMIN';
@@ -163,14 +153,9 @@ export default async function Page({
     end: rangeEnd,
   });
 
-  const rangeLabel = `${fmtDate(rangeStart, 'MMM d, yyyy')} – ${fmtDate(
-    rangeEnd,
-    'MMM d, yyyy'
-  )}`;
-
   // Prev/Next navigation jumps by the selected number of months
-  const prevFrom = fmtDate(addMonths(rangeStart, -months), 'yyyy-MM-dd');
-  const nextFrom = fmtDate(addMonths(rangeStart, months), 'yyyy-MM-dd');
+  const prevFrom = fmtInVenue(addMonths(rangeStart, -months), 'yyyy-MM-dd');
+  const nextFrom = fmtInVenue(addMonths(rangeStart, months), 'yyyy-MM-dd');
 
   return (
     <div className='p-6 space-y-6'>
@@ -187,7 +172,7 @@ export default async function Page({
             type='date'
             name='from'
             className='border rounded px-2 py-1 text-sm'
-            defaultValue={fmtDate(rangeStart, 'yyyy-MM-dd')}
+            defaultValue={fmtInVenue(rangeStart, 'yyyy-MM-dd')}
             aria-label='From'
           />
           <select
@@ -234,7 +219,8 @@ export default async function Page({
       {/* Subheader: range + quick nav */}
       <div className='flex items-center justify-between gap-4 flex-wrap text-sm text-gray-700'>
         <div>
-          Showing: {rangeLabel}
+          {/* This is the line that fixes the screenshot issue */}
+          Showing: {fmtRange(rangeStart, rangeEnd, DATE_FMT)}
           {jatha ? ` · Jatha ${jatha}` : ''}
           {role ? ` · ${role}` : ''}
           {q ? ` · "${q}"` : ''}
@@ -320,7 +306,7 @@ export default async function Page({
                       return (
                         <div key={month.toISOString()}>
                           <div className='text-xs font-semibold text-gray-700 mb-1'>
-                            {fmtDate(month, 'MMMM yyyy')}
+                            {fmtInVenue(month, MONTH_FMT)}
                           </div>
                           <ul className='space-y-2'>
                             {items.map((a) => {
@@ -341,7 +327,8 @@ export default async function Page({
                                     {b.title}
                                   </div>
                                   <div className='text-xs text-gray-600'>
-                                    {fmtDate(sStart)} – {fmtDate(sEnd)}
+                                    {fmtInVenue(sStart, DATE_TIME_FMT)} –{' '}
+                                    {fmtInVenue(sEnd, DATE_TIME_FMT)}
                                   </div>
                                   <div className='text-xs'>{loc}</div>
                                   <div className='text-xs mt-0.5'>

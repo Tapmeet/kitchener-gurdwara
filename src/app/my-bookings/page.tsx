@@ -2,17 +2,15 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { formatInTimeZone } from 'date-fns-tz';
+import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 import { Prisma } from '@prisma/client';
-import { VENUE_TZ } from '@/lib/businessHours';
 
-const TZ = VENUE_TZ;
-
-function fmt(d: Date, pattern = 'EEE, MMM d yyyy, h:mm a') {
+function fmt(d: Date | string | number, pattern = DATE_TIME_FMT) {
   try {
-    return formatInTimeZone(d, TZ, pattern);
+    return fmtInVenue(d, pattern);
   } catch {
-    return d.toString();
+    const date = d instanceof Date ? d : new Date(d as any);
+    return date.toString();
   }
 }
 
@@ -33,7 +31,7 @@ export default async function MyBookingsPage() {
   const email = session.user.email ?? null;
   const userId = (session.user as any)?.id ?? null;
 
-  // Build a properly typed OR array to avoid union widening
+  // Properly typed OR filters (avoids union-widening TS errors)
   const orFilters: Prisma.BookingWhereInput[] = [];
   if (userId) {
     orFilters.push({ createdById: userId as string });
@@ -42,7 +40,7 @@ export default async function MyBookingsPage() {
     orFilters.push({
       contactEmail: {
         equals: email,
-        mode: Prisma.QueryMode.insensitive, // or: 'insensitive' as const
+        mode: Prisma.QueryMode.insensitive,
       },
     });
   }
@@ -71,7 +69,7 @@ export default async function MyBookingsPage() {
     );
   }
 
-  // Classification uses absolute time; formatting uses TZ for display
+  // Classification uses absolute time; formatting uses venue TZ
   const now = new Date();
   const isLive = (status: string) => !['CANCELLED', 'EXPIRED'].includes(status);
 

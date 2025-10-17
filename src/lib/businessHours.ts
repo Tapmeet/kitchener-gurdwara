@@ -1,6 +1,6 @@
 // src/lib/businessHours.ts
 
-export const VENUE_TZ = 'America/Toronto';
+export const VENUE_TZ = process.env.NEXT_PUBLIC_VENUE_TZ || 'America/Toronto';
 
 export const BUSINESS_HOURS: Record<
   number,

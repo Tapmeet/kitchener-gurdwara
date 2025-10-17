@@ -1,20 +1,12 @@
 // src/app/admin/bookings/page.tsx
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { format } from 'date-fns';
 import { ApproveButtons } from './parts';
 import ReviewProposed from '@/components/admin/ReviewProposed';
+import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-function fmt(d: Date) {
-  try {
-    return format(d, 'EEE, MMM d yyyy, h:mm a');
-  } catch {
-    return d.toString();
-  }
-}
 
 export default async function AdminBookingsPage() {
   const session = await auth();
@@ -38,7 +30,7 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
-        // 🔍 only show PROPOSED rows for pending bookings
+        // show PROPOSED rows for pending bookings
         assignments: {
           where: { state: 'PROPOSED' },
           orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
@@ -56,7 +48,7 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
-        // ✅ only show CONFIRMED rows on confirmed bookings
+        // only CONFIRMED rows on confirmed bookings
         assignments: {
           where: { state: 'CONFIRMED' },
           orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
@@ -69,6 +61,8 @@ export default async function AdminBookingsPage() {
     }),
   ]);
 
+  const fmt = (d: Date | string | number) => fmtInVenue(d, DATE_TIME_FMT);
+
   return (
     <div className='p-6 space-y-8'>
       <h1 className='text-lg font-semibold'>Admin · Bookings</h1>
@@ -80,7 +74,6 @@ export default async function AdminBookingsPage() {
         ) : (
           <div className='divide-y rounded-xl border'>
             {pending.map((b) => {
-              // Dedupe names so rotations don't repeat visually
               const uniqueNames = Array.from(
                 new Set(
                   b.assignments
@@ -88,6 +81,15 @@ export default async function AdminBookingsPage() {
                     .filter(Boolean) as string[]
                 )
               );
+              const where =
+                b.locationType === 'GURDWARA'
+                  ? b.hall?.name
+                    ? `Gurdwara — ${b.hall.name}`
+                    : 'Gurdwara'
+                  : b.address
+                    ? `Outside — ${b.address}`
+                    : 'Outside';
+
               return (
                 <div
                   key={b.id}
@@ -96,9 +98,7 @@ export default async function AdminBookingsPage() {
                   <div className='flex-1'>
                     <div className='font-medium'>{b.title}</div>
                     <div className='text-sm text-gray-600'>
-                      {fmt(b.start)} – {fmt(b.end)} · {b.locationType}
-                      {b.hall?.name ? ` · ${b.hall.name}` : ''}
-                      {b.address ? ` · ${b.address}` : ''}
+                      {fmt(b.start)} – {fmt(b.end)} · {where}
                     </div>
                     <div className='text-xs text-gray-500 mt-1'>
                       Attendees: {b.attendees} · Contact: {b.contactName} (
@@ -115,13 +115,12 @@ export default async function AdminBookingsPage() {
                       </div>
                     ) : null}
 
-                    {/* 👇 Add the swap UI here */}
+                    {/* Proposed assignment review UI */}
                     <div className='mt-3'>
                       <ReviewProposed bookingId={b.id} showApprove={false} />
                     </div>
                   </div>
 
-                  {/* Your existing Approve/Cancel buttons (Approve should POST /api/bookings/[id]/approve) */}
                   <div className='md:w-[240px] flex flex-col gap-2'>
                     <a
                       href={`/bookings/${b.id}/assignments`}
@@ -154,12 +153,20 @@ export default async function AdminBookingsPage() {
                     .filter(Boolean) as string[]
                 )
               );
+              const where =
+                b.locationType === 'GURDWARA'
+                  ? b.hall?.name
+                    ? `Gurdwara — ${b.hall.name}`
+                    : 'Gurdwara'
+                  : b.address
+                    ? `Outside — ${b.address}`
+                    : 'Outside';
+
               return (
                 <div key={b.id} className='p-4'>
                   <div className='font-medium'>{b.title}</div>
                   <div className='text-sm text-gray-600'>
-                    {fmt(b.start)} – {fmt(b.end)} · {b.locationType}
-                    {b.hall?.name ? ` · ${b.hall.name}` : ''}
+                    {fmt(b.start)} – {fmt(b.end)} · {where}
                   </div>
                   <div className='text-xs text-gray-500 mt-1'>
                     Programs:{' '}

@@ -1,11 +1,17 @@
+// src/app/my-assignments/page.tsx
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { formatInTimeZone } from 'date-fns-tz';
+import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 
-const TZ = process.env.NEXT_PUBLIC_TIMEZONE || 'America/Toronto';
-const fmt = (d: Date | string | number, p = 'EEE, MMM d yyyy, h:mm a') =>
-  formatInTimeZone(d instanceof Date ? d : new Date(d), TZ, p);
+function fmt(d: Date | string | number, pattern = DATE_TIME_FMT) {
+  try {
+    return fmtInVenue(d, pattern);
+  } catch {
+    const date = d instanceof Date ? d : new Date(d as any);
+    return date.toString();
+  }
+}
 
 export default async function MyAssignmentsPage() {
   const session = await auth();
@@ -43,7 +49,7 @@ export default async function MyAssignmentsPage() {
       staffId: staff.id,
       state: 'CONFIRMED',
       OR: [
-        { end: { gte: now } }, // windowed
+        { end: { gte: now } }, // windowed assignments
         { AND: [{ end: null }, { booking: { end: { gte: now } } }] }, // legacy
       ],
       booking: { status: 'CONFIRMED' },
