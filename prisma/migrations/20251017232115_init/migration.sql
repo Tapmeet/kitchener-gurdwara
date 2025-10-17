@@ -13,6 +13,12 @@ CREATE TYPE "public"."StaffSkill" AS ENUM ('PATH', 'KIRTAN');
 -- CreateEnum
 CREATE TYPE "public"."Jatha" AS ENUM ('A', 'B');
 
+-- CreateEnum
+CREATE TYPE "public"."BookingStatus" AS ENUM ('PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED');
+
+-- CreateEnum
+CREATE TYPE "public"."AssignmentState" AS ENUM ('PROPOSED', 'CONFIRMED');
+
 -- CreateTable
 CREATE TABLE "public"."User" (
     "id" TEXT NOT NULL,
@@ -54,6 +60,9 @@ CREATE TABLE "public"."ProgramType" (
     "minKirtanis" INTEGER NOT NULL DEFAULT 0,
     "peopleRequired" INTEGER NOT NULL DEFAULT 1,
     "compWeight" INTEGER NOT NULL DEFAULT 1,
+    "trailingKirtanMinutes" INTEGER NOT NULL DEFAULT 0,
+    "pathRotationMinutes" INTEGER NOT NULL DEFAULT 0,
+    "pathClosingDoubleMinutes" INTEGER NOT NULL DEFAULT 0,
 
     CONSTRAINT "ProgramType_pkey" PRIMARY KEY ("id")
 );
@@ -73,8 +82,11 @@ CREATE TABLE "public"."Booking" (
     "contactEmail" VARCHAR(320),
     "notes" TEXT,
     "createdById" TEXT,
+    "approvedAt" TIMESTAMP(3),
+    "approvedById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "status" "public"."BookingStatus" NOT NULL DEFAULT 'PENDING',
 
     CONSTRAINT "Booking_pkey" PRIMARY KEY ("id")
 );
@@ -110,6 +122,9 @@ CREATE TABLE "public"."BookingAssignment" (
     "bookingId" TEXT NOT NULL,
     "bookingItemId" TEXT NOT NULL,
     "staffId" TEXT NOT NULL,
+    "start" TIMESTAMP(3),
+    "end" TIMESTAMP(3),
+    "state" "public"."AssignmentState" NOT NULL DEFAULT 'PROPOSED',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "BookingAssignment_pkey" PRIMARY KEY ("id")
@@ -165,6 +180,12 @@ CREATE UNIQUE INDEX "ProgramType_name_key" ON "public"."ProgramType"("name");
 CREATE INDEX "Booking_start_end_idx" ON "public"."Booking"("start", "end");
 
 -- CreateIndex
+CREATE INDEX "Booking_status_idx" ON "public"."Booking"("status");
+
+-- CreateIndex
+CREATE INDEX "Booking_hallId_idx" ON "public"."Booking"("hallId");
+
+-- CreateIndex
 CREATE INDEX "BookingItem_programTypeId_idx" ON "public"."BookingItem"("programTypeId");
 
 -- CreateIndex
@@ -177,13 +198,19 @@ CREATE UNIQUE INDEX "Staff_name_key" ON "public"."Staff"("name");
 CREATE UNIQUE INDEX "Staff_email_key" ON "public"."Staff"("email");
 
 -- CreateIndex
-CREATE INDEX "BookingAssignment_bookingId_idx" ON "public"."BookingAssignment"("bookingId");
+CREATE INDEX "BookingAssignment_bookingId_start_end_idx" ON "public"."BookingAssignment"("bookingId", "start", "end");
 
 -- CreateIndex
-CREATE INDEX "BookingAssignment_staffId_idx" ON "public"."BookingAssignment"("staffId");
+CREATE INDEX "BookingAssignment_staffId_start_end_idx" ON "public"."BookingAssignment"("staffId", "start", "end");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "BookingAssignment_bookingItemId_staffId_key" ON "public"."BookingAssignment"("bookingItemId", "staffId");
+CREATE INDEX "BookingAssignment_staffId_state_idx" ON "public"."BookingAssignment"("staffId", "state");
+
+-- CreateIndex
+CREATE INDEX "BookingAssignment_bookingId_state_idx" ON "public"."BookingAssignment"("bookingId", "state");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "BookingAssignment_bookingItemId_staffId_start_end_key" ON "public"."BookingAssignment"("bookingItemId", "staffId", "start", "end");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Account_provider_providerAccountId_key" ON "public"."Account"("provider", "providerAccountId");
@@ -202,6 +229,9 @@ ALTER TABLE "public"."Booking" ADD CONSTRAINT "Booking_hallId_fkey" FOREIGN KEY 
 
 -- AddForeignKey
 ALTER TABLE "public"."Booking" ADD CONSTRAINT "Booking_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "public"."User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."Booking" ADD CONSTRAINT "Booking_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "public"."User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "public"."BookingItem" ADD CONSTRAINT "BookingItem_bookingId_fkey" FOREIGN KEY ("bookingId") REFERENCES "public"."Booking"("id") ON DELETE CASCADE ON UPDATE CASCADE;
