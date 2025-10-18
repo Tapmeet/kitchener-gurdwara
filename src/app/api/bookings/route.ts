@@ -594,6 +594,41 @@ export async function POST(req: Request) {
         // Long path: skip staff pool/headcount checks; we just hold the slot/hall.
       }
 
+      // ---- resolve a safe createdBy relation ----
+      let createdByData: Record<string, any> = {};
+      try {
+        const sid = session?.user?.id || null;
+        const semail = (session?.user as any)?.email || null;
+
+        // Prefer session user id if it actually exists in this DB
+        if (sid) {
+          const exists = await tx.user.findUnique({
+            where: { id: sid },
+            select: { id: true },
+          });
+          if (exists) {
+            createdByData = { createdById: exists.id };
+          }
+        }
+        // Fallback: connect or create by email (unique), useful after reseeds
+        if (!('createdById' in createdByData) && semail) {
+          createdByData = {
+            createdBy: {
+              connectOrCreate: {
+                where: { email: semail },
+                create: {
+                  email: semail,
+                  name: (session?.user as any)?.name ?? null,
+                  role: 'VIEWER',
+                },
+              },
+            },
+          };
+        }
+      } catch {
+        // omit relation silently; booking creation will still succeed
+      }
+
       const createdRaw = await tx.booking.create({
         data: {
           title: input.title,
@@ -615,6 +650,7 @@ export async function POST(req: Request) {
               : 1,
           createdById: session?.user?.id ?? null,
           status: 'PENDING',
+          ...createdByData,
           items: {
             create: input.items.map((i: any) => ({
               programTypeId: i.programTypeId,
