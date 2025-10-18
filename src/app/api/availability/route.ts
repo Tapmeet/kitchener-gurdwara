@@ -7,15 +7,49 @@ import {
   allowedStartHoursFor,
   hourSpan,
   minSelectableHour24,
+  VENUE_TZ,
 } from '@/lib/businessHours';
 import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 import { pickFirstFreeHall } from '@/lib/halls';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
+import { formatInTimeZone } from 'date-fns-tz';
 
 // 15 min buffer (outside gurdwara only)
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+
+/** Convert "YYYY-MM-DD @ hour:00 in TZ" to the correct UTC Date, robust to DST. */
+function offsetStrToMinutes(off: string): number {
+  // off like "+05:30" or "-04:00"
+  const sign = off.startsWith('-') ? -1 : 1;
+  const [hh, mm] = off.slice(1).split(':').map(Number);
+  return sign * (hh * 60 + (mm || 0));
+}
+function ymdToNext(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+function zonedLocalToUtc(dateStr: string, hour24: number, tz = VENUE_TZ): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // Initial guess: treat local wall-time components as if they were UTC
+  let guess = new Date(Date.UTC(y, m - 1, d, hour24, 0, 0, 0));
+  // Get the zone offset (e.g. "-04:00") *at that instant*
+  let offMin = offsetStrToMinutes(formatInTimeZone(guess, tz, 'xxx'));
+  // Apply once
+  let utc = new Date(guess.getTime() - offMin * 60_000);
+  // One more iteration handles DST boundaries cleanly
+  const offMin2 = offsetStrToMinutes(formatInTimeZone(utc, tz, 'xxx'));
+  if (offMin2 !== offMin) {
+    utc = new Date(guess.getTime() - offMin2 * 60_000);
+  }
+  return utc;
+}
 
 /** Build a map hour(24)->Set<staffId> that are busy in that hour, honoring outside buffer
  * and per-assignment windows (start/end). Only counts PENDING/CONFIRMED. */
@@ -33,17 +67,15 @@ async function buildBusyByHourForDay(dayStart: Date, dayEnd: Date) {
     },
     select: {
       staffId: true,
-      start: true, // assignment window (may be null)
-      end: true, // assignment window (may be null)
+      start: true,
+      end: true,
       booking: { select: { start: true, end: true, locationType: true } },
     },
   });
 
   for (const a of asns) {
-    // prefer assignment window if present, else fall back to the booking window
     const sRaw = a.start ?? a.booking.start;
     const eRaw = a.end ?? a.booking.end;
-
     const s = new Date(sRaw);
     const e = new Date(eRaw);
 
@@ -65,7 +97,6 @@ async function buildBusyByHourForDay(dayStart: Date, dayEnd: Date) {
   return busyByHour;
 }
 
-/** Count how many whole jathas (all members) are fully free in a given hour. */
 function countWholeFreeJathasAtHour(
   busySet: Set<string>,
   groups: Map<string, { id: string }[]>
@@ -73,9 +104,8 @@ function countWholeFreeJathasAtHour(
   let free = 0;
   for (const [_key, members] of groups) {
     const ids = members.map((m) => m.id);
-    if (ids.length >= JATHA_SIZE && ids.every((id) => !busySet.has(id))) {
+    if (ids.length >= JATHA_SIZE && ids.every((id) => !busySet.has(id)))
       free += 1;
-    }
   }
   return free;
 }
@@ -107,7 +137,6 @@ export async function GET(req: Request) {
       );
     }
 
-    // Load selected programs for staffing + duration (+category for jatha rule)
     const programs = await prisma.programType.findMany({
       where: { id: { in: programTypeIds } },
       select: {
@@ -118,7 +147,7 @@ export async function GET(req: Request) {
         requiresHall: true,
         peopleRequired: true,
         category: true,
-        trailingKirtanMinutes: true, // NEW
+        trailingKirtanMinutes: true,
       },
     });
 
@@ -129,7 +158,6 @@ export async function GET(req: Request) {
       );
     }
 
-    // Location rules: outside must allow it
     if (
       locationType === 'OUTSIDE_GURDWARA' &&
       programs.some((p) => !p.canBeOutsideGurdwara)
@@ -144,13 +172,11 @@ export async function GET(req: Request) {
       });
     }
 
-    // Required roles vector (sum of selected programs)
     const required: RoleVector = programs.reduce(
       (acc, p) => add(acc, reqFromProgram(p as any)),
       { PATH: 0, KIRTAN: 0 }
     );
 
-    // Headcount required (peopleRequired dominates min sums)
     const headcountRequired = programs
       .map((p) =>
         Math.max(
@@ -160,33 +186,27 @@ export async function GET(req: Request) {
       )
       .reduce((a, b) => a + b, 0);
 
-    // How long is this block?
     const durationMinutes = Math.max(
       ...programs.map((p) => p.durationMinutes || 0)
     );
     const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
 
-    // For jatha logic
     const trailingMax = Math.max(
       ...programs.map((p) => p.trailingKirtanMinutes ?? 0)
     );
 
-    // Programs that need a full jatha the whole way through (pure KIRTAN / minKirtanis>0)
     const jathaAllThroughCount = programs.filter(
       (p) => (p.minKirtanis ?? 0) > 0 || p.category === ProgramCategory.KIRTAN
     ).length;
 
-    // Programs that need a jatha only at the end (trailing window)
     const jathaAtEndCount = programs.filter(
       (p) => (p.trailingKirtanMinutes ?? 0) > 0
     ).length;
 
-    // Special handling for very long windows
-    const isLong = durationHours >= 36; // treat 36h+ as a long multi-day window
+    const isLong = durationHours >= 36;
     const isPurePath = required.KIRTAN === 0;
     const isLongPath = isLong && isPurePath;
 
-    // Multi-day window with Kirtan embedded is not supported
     if (isLong && !isPurePath) {
       return NextResponse.json({
         hours: [],
@@ -199,19 +219,23 @@ export async function GET(req: Request) {
       });
     }
 
-    // Candidate start hours
-    const dayLocal = new Date(`${dateStr}T00:00:00`);
-    let candidates = isLong
-      ? [...BUSINESS_HOURS_24] // start any business-hour; end can cross days
-      : allowedStartHoursFor(dayLocal, durationHours);
+    // ----- Venue-day boundaries (Toronto) in UTC -----
+    const dayStart = zonedLocalToUtc(dateStr, 0, VENUE_TZ);
+    const dayEnd = new Date(
+      zonedLocalToUtc(ymdToNext(dateStr), 0, VENUE_TZ).getTime() - 1
+    );
 
-    // Hide past hours if querying "today"
-    const minHourToday = minSelectableHour24(dayLocal, new Date());
+    // Candidate start hours (in venue TZ)
+    const baseCandidates = isLong
+      ? [...BUSINESS_HOURS_24]
+      : allowedStartHoursFor(dayStart, durationHours);
+    let candidates = baseCandidates;
+
+    // Hide past hours if querying "today" (venue TZ)
+    const minHourToday = minSelectableHour24(dayStart, new Date());
     candidates = candidates.filter((h) => h >= minHourToday);
 
-    // Overlaps that touch the day (both locations → shared pool math)
-    const dayStart = new Date(`${dateStr}T00:00:00`);
-    const dayEnd = new Date(`${dateStr}T23:59:59.999`);
+    // Overlaps that touch the day
     const overlaps = await prisma.booking.findMany({
       where: {
         start: { lte: dayEnd },
@@ -233,7 +257,6 @@ export async function GET(req: Request) {
       },
     });
 
-    // Build used vectors per hour per location, respecting outside buffer
     const usedGW: Record<number, RoleVector> = {};
     const usedOUT: Record<number, RoleVector> = {};
     for (const h of BUSINESS_HOURS_24) {
@@ -288,34 +311,23 @@ export async function GET(req: Request) {
       }
     }
 
-    // Busy-by-hour for whole-jatha checks + all jatha groups
     const busyByHour = await buildBusyByHourForDay(dayStart, dayEnd);
-    const jathaGroups = await getJathaGroups(); // Map<'A'|'B', Staff[]>
+    const jathaGroups = await getJathaGroups();
 
-    // Total pool & per-location caps
-    const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
-    const totalPool = await getTotalPoolPerRole(); // { PATH, KIRTAN }
-    const locMax = getMaxPerLocationPerRole(locationType); // { PATH, KIRTAN }
+    const totalUniqueStaff = await getTotalUniqueStaffCount();
+    const totalPool = await getTotalPoolPerRole();
+    const locMax = getMaxPerLocationPerRole(locationType);
 
-    // Evaluate each candidate across its whole span (staff feasibility)
     const hours: number[] = [];
     const remainingByHour: Record<number, RoleVector> = {};
 
     for (const hStart of candidates) {
-      const spanStart = new Date(
-        dayLocal.getFullYear(),
-        dayLocal.getMonth(),
-        dayLocal.getDate(),
-        hStart,
-        0,
-        0,
-        0
-      );
+      // Build span in venue time, convert to UTC
+      const spanStart = zonedLocalToUtc(dateStr, hStart, VENUE_TZ);
       const spanEnd = new Date(
         spanStart.getTime() + durationMinutes * 60 * 1000
       );
 
-      // Staff travel buffer if OUTSIDE
       const candStart =
         locationType === 'OUTSIDE_GURDWARA'
           ? new Date(spanStart.getTime() - OUTSIDE_BUFFER_MS)
@@ -336,7 +348,6 @@ export async function GET(req: Request) {
       let ok = true;
 
       if (!isLongPath) {
-        // Role pool & per-location caps
         for (const hh of spanHours) {
           for (const r of ROLES) {
             const total = totalPool[r] ?? 0;
@@ -362,7 +373,6 @@ export async function GET(req: Request) {
           }
           if (!ok) break;
 
-          // Unique headcount guard (humans, not roles)
           const usedOppHead =
             locationType === 'GURDWARA' ? usedHeadOUT[hh] : usedHeadGW[hh];
           const usedHereHead =
@@ -377,7 +387,6 @@ export async function GET(req: Request) {
           }
         }
       } else {
-        // Long path: we don’t enforce staff pool/headcount here.
         minRem.PATH = 0;
         minRem.KIRTAN = 0;
       }
@@ -432,15 +441,7 @@ export async function GET(req: Request) {
       programs.some((p) => p.requiresHall) || locationType === 'GURDWARA';
 
     for (const hStart of hours) {
-      const slotStart = new Date(
-        dayLocal.getFullYear(),
-        dayLocal.getMonth(),
-        dayLocal.getDate(),
-        hStart,
-        0,
-        0,
-        0
-      );
+      const slotStart = zonedLocalToUtc(dateStr, hStart, VENUE_TZ);
       const slotEnd = new Date(
         slotStart.getTime() + durationMinutes * 60 * 1000
       );
@@ -448,10 +449,9 @@ export async function GET(req: Request) {
       const req = required;
       const rem = remainingByHour[hStart] ?? { PATH: 0, KIRTAN: 0 };
       const hasStaff = isLongPath
-        ? true // don’t block on staffing for long path windows
+        ? true
         : rem.PATH >= req.PATH && rem.KIRTAN >= req.KIRTAN;
 
-      // Hall feasibility
       let hasHall = true;
       let hallPick: string | null = null;
 
