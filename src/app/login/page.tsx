@@ -22,13 +22,13 @@ function sanitizeCallbackUrl(raw: string | null): string {
 }
 
 const ERROR_MAP: Record<string, string> = {
-  OAuthSignin: 'Could not sign in with the provider.',
-  OAuthCallback: 'Provider callback failed.',
-  OAuthCreateAccount: 'Could not create account with the provider.',
-  EmailCreateAccount: 'Could not create account with email.',
-  CallbackRouteError: 'Authentication callback failed.',
+  OAuthSignin: 'OAuth sign-in failed. Please try again.',
+  OAuthCallback: 'OAuth callback failed. Please try again.',
+  CallbackRouteError: 'An error occurred finishing sign-in.',
+  OAuthAccountNotLinked:
+    'This email is already linked with another provider. Try that provider or use a different email.',
   AccessDenied: 'Access denied.',
-  Verification: 'Verification failed.',
+  CSRF: 'Security check failed. Please reload and try again.',
   CredentialsSignin: 'Invalid email or password.',
   Configuration: 'Auth configuration error. Please contact the admin.',
   Default: 'Unexpected error. Please try again.',

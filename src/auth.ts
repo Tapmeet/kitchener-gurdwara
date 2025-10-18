@@ -69,10 +69,18 @@ export const authOptions: NextAuthOptions = {
         const admins = parseAdminEmails();
         if (token.email && admins.includes(token.email.toLowerCase())) {
           (token as any).role = 'ADMIN';
-          await prisma.user.update({
-            where: { email: token.email as string },
-            data: { role: 'ADMIN' as any },
-          });
+          try {
+            const email = (token.email as string).toLowerCase();
+            const existing = await prisma.user.findUnique({ where: { email } });
+            if (existing?.role !== 'ADMIN') {
+              await prisma.user.update({
+                where: { email },
+                data: { role: 'ADMIN' },
+              });
+            }
+          } catch (e) {
+            console.error('Admin autopromote update failed:', e);
+          }
         }
       } else if (token.email) {
         // Refresh role from DB
