@@ -141,6 +141,7 @@ model Booking {
   @@index([hallId])
   @@index([createdById])
   @@index([approvedById])
+  @@index([contactEmail])
 }
 
 model BookingItem {
