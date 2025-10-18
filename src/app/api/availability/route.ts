@@ -11,7 +11,7 @@ import {
 } from '@/lib/businessHours';
 import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
-import { pickFirstFreeHall } from '@/lib/halls';
+import { pickFirstFittingHall } from '@/lib/halls';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -119,6 +119,7 @@ export async function GET(req: Request) {
       | LocationType
       | '';
     const hallId = searchParams.get('hallId') || undefined;
+    const attendees = Number(searchParams.get('attendees') ?? '1') || 1;
 
     // Multi-select programs (fallback to single)
     const idsCsv =
@@ -468,7 +469,7 @@ export async function GET(req: Request) {
           hasHall = clash === 0;
           hallPick = hasHall ? hallId : null;
         } else {
-          hallPick = await pickFirstFreeHall(slotStart, slotEnd);
+          hallPick = await pickFirstFittingHall(slotStart, slotEnd, attendees);
           hasHall = !!hallPick;
         }
       }

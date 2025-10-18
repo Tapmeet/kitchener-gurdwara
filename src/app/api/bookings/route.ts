@@ -29,6 +29,7 @@ import { autoAssignForBooking } from '@/lib/auto-assign';
 import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
+import { pickFirstFittingHall } from '@/lib/halls';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
@@ -380,72 +381,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // ————— Per-hall selection (Small → Main → Upper) —————
+    // ————— Pick a hall if at the Gurdwara —————
     let hallId: string | null = null;
-
     if (input.locationType === 'GURDWARA') {
-      const halls = await prisma.hall.findMany({
-        where: { isActive: true },
-        select: { id: true, name: true, capacity: true },
-        orderBy: { name: 'asc' },
-      });
-
-      const small =
-        halls.find((h) => HALL_PATTERNS.small.test(h.name)) ??
-        halls.find((h) => (h.capacity ?? 0) > 100 && (h.capacity ?? 0) <= 125);
-      const main =
-        halls.find((h) => HALL_PATTERNS.main.test(h.name)) ??
-        halls.find((h) => (h.capacity ?? 0) > 125);
-      const upper =
-        halls.find((h) => HALL_PATTERNS.upper.test(h.name)) ??
-        halls.find((h) => (h.capacity ?? 0) > 0 && (h.capacity ?? 0) <= 100);
-
-      const ordered = [small, main, upper].filter(Boolean) as {
-        id: string;
-        name: string;
-        capacity: number | null;
-      }[];
-
       const attendees =
         typeof input.attendees === 'number' ? Math.max(1, input.attendees) : 1;
-
-      const capOf = (h: { name: string; capacity: number | null }) => {
-        if (typeof h.capacity === 'number' && h.capacity != null)
-          return h.capacity;
-        if (HALL_PATTERNS.small.test(h.name)) return CAP_DEFAULTS.small;
-        if (HALL_PATTERNS.main.test(h.name)) return CAP_DEFAULTS.main;
-        if (HALL_PATTERNS.upper.test(h.name)) return CAP_DEFAULTS.upper;
-        return Number.MAX_SAFE_INTEGER; // fallback if unknown
-      };
-
-      const fits = (h: { name: string; capacity: number | null }) =>
-        capOf(h) >= attendees;
-
-      // pick first hall in priority order that (a) fits capacity and (b) has no overlap
-      for (const hall of ordered) {
-        if (!fits(hall)) continue;
-
-        const clash = await prisma.booking.count({
-          where: {
-            locationType: 'GURDWARA',
-            hallId: hall.id,
-            start: { lt: end },
-            end: { gt: start },
-            status: { in: ['PENDING', 'CONFIRMED'] },
-          },
-        });
-
-        if (clash === 0) {
-          hallId = hall.id;
-          break;
-        }
-      }
-
+      hallId = await pickFirstFittingHall(start, end, attendees);
       if (!hallId) {
         return NextResponse.json(
           {
             error:
-              'No suitable hall (Small → Main → Upper) is free at that time for the attendee count.',
+              'No suitable hall is free at that time for the attendee count.',
           },
           { status: 409 }
         );
@@ -656,7 +602,7 @@ export async function POST(req: Request) {
           start,
           end,
           locationType: input.locationType,
-          hallId,
+          ...(hallId ? { hall: { connect: { id: hallId } } } : {}),
           address:
             input.locationType === 'OUTSIDE_GURDWARA'
               ? (input.address ?? null)
@@ -669,7 +615,8 @@ export async function POST(req: Request) {
             typeof input.attendees === 'number'
               ? Math.max(1, input.attendees)
               : 1,
-          createdById: session?.user?.id ?? null,
+          // createdBy handled by your createdByData block
+          ...createdByData,
           status: 'PENDING',
           ...createdByData,
           items: {
