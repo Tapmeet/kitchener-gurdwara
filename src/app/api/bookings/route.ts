@@ -396,6 +396,13 @@ export async function POST(req: Request) {
           { status: 409 }
         );
       }
+      // Debug: confirm server is picking a hall you expect
+      console.log('[hall-pick]', {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        attendees,
+        hallId,
+      });
     }
 
     // Outside buffer (travel) for capacity math
@@ -571,27 +578,8 @@ export async function POST(req: Request) {
             },
           };
         }
-        // Fallback 2: contactEmail (public booking)
-        if (
-          !('createdById' in createdByData) &&
-          !('createdBy' in createdByData)
-        ) {
-          const cemail = (input.contactEmail || '').trim().toLowerCase();
-          if (cemail) {
-            createdByData = {
-              createdBy: {
-                connectOrCreate: {
-                  where: { email: cemail },
-                  create: {
-                    email: cemail,
-                    name: input.contactName ?? null,
-                    role: 'VIEWER',
-                  },
-                },
-              },
-            };
-          }
-        }
+        // (removed) No contactEmail fallback here; anonymous bookings remain with createdById = null.
+        // Bookings will be linked to the user on their first login in auth.ts (callbacks.signIn).
       } catch {
         // omit relation silently; booking creation will still succeed
       }
@@ -615,8 +603,6 @@ export async function POST(req: Request) {
             typeof input.attendees === 'number'
               ? Math.max(1, input.attendees)
               : 1,
-          // createdBy handled by your createdByData block
-          ...createdByData,
           status: 'PENDING',
           ...createdByData,
           items: {
