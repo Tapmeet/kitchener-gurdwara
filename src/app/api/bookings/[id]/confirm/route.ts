@@ -49,13 +49,14 @@ export async function POST(
     }
   } catch {}
 
-  // (Your existing status flip here; leaving your logic intact)
+  // 1) Mark booking confirmed (and stamp approver)
   const updated = await prisma.booking.update({
     where: { id },
     data: { status: 'CONFIRMED', approvedAt: new Date(), ...approvedByData },
     select: { id: true },
   });
 
+  // 2) Optional: run auto-assign to fill any gaps
   let createdCount = 0;
   try {
     const res = await autoAssignForBooking(updated.id);
@@ -72,8 +73,14 @@ export async function POST(
     }
   } catch (e) {
     console.error('Auto-assign during confirm failed:', e);
-    // keep approval successful, but surface the warning to the client
+    // keep confirmation successful
   }
+
+  // 3) ⚠️ finalize all remaining PROPOSED assignments for this booking
+  await prisma.bookingAssignment.updateMany({
+    where: { bookingId: updated.id, state: 'PROPOSED' },
+    data: { state: 'CONFIRMED' },
+  });
 
   return NextResponse.json(
     { ok: true, id: updated.id, createdCount },
