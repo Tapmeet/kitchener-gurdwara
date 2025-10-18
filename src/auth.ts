@@ -64,26 +64,41 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     // 1) On every successful sign-in: link any anonymous bookings by contactEmail
     async signIn({ user, account }) {
-      // optional guard: only allow verified emails from Google
       if (
         account?.provider === 'google' &&
         (account as any)?.emailVerified === false
       ) {
         return false;
       }
-      if (user?.email) {
-        const email = user.email.toLowerCase();
-        try {
-          await prisma.booking.updateMany({
+      const email = user?.email?.toLowerCase();
+      if (!email) return true;
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Guarantee a User row exists for this email (idempotent)
+          const u = await tx.user.upsert({
+            where: { email },
+            update: {}, // nothing to update
+            create: {
+              email,
+              name: user?.name ?? null,
+              role: 'VIEWER',
+            },
+            select: { id: true },
+          });
+
+          // Link all anonymous bookings (createdById null + contactEmail match)
+          await tx.booking.updateMany({
             where: {
               createdById: null,
               contactEmail: { equals: email, mode: 'insensitive' },
             },
-            data: { createdById: user.id },
+            data: { createdById: u.id },
           });
-        } catch (e) {
-          console.error('Link bookings on sign-in failed:', e);
-        }
+        });
+      } catch (e) {
+        console.error('Link bookings on sign-in failed:', e);
+        // Don’t block login on a bookkeeping error
       }
       return true;
     },
