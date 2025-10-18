@@ -625,6 +625,27 @@ export async function POST(req: Request) {
             },
           };
         }
+        // Fallback 2: contactEmail (public booking)
+        if (
+          !('createdById' in createdByData) &&
+          !('createdBy' in createdByData)
+        ) {
+          const cemail = (input.contactEmail || '').trim().toLowerCase();
+          if (cemail) {
+            createdByData = {
+              createdBy: {
+                connectOrCreate: {
+                  where: { email: cemail },
+                  create: {
+                    email: cemail,
+                    name: input.contactName ?? null,
+                    role: 'VIEWER',
+                  },
+                },
+              },
+            };
+          }
+        }
       } catch {
         // omit relation silently; booking creation will still succeed
       }

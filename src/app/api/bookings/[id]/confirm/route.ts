@@ -21,10 +21,38 @@ export async function POST(
 
   const { id } = await ctx.params;
 
+  // Resolve approver (by id or email)
+  let approvedByData: Record<string, any> = {};
+  try {
+    const sid = (session as any)?.user?.id || null;
+    const semail = (session as any)?.user?.email || null;
+    if (sid) {
+      const exists = await prisma.user.findUnique({
+        where: { id: sid },
+        select: { id: true },
+      });
+      if (exists) approvedByData = { approvedById: exists.id };
+    }
+    if (!('approvedById' in approvedByData) && semail) {
+      approvedByData = {
+        approvedBy: {
+          connectOrCreate: {
+            where: { email: semail },
+            create: {
+              email: semail,
+              name: (session as any)?.user?.name ?? null,
+              role: 'ADMIN' as any,
+            },
+          },
+        },
+      };
+    }
+  } catch {}
+
   // (Your existing status flip here; leaving your logic intact)
   const updated = await prisma.booking.update({
     where: { id },
-    data: { status: 'CONFIRMED' },
+    data: { status: 'CONFIRMED', approvedAt: new Date(), ...approvedByData },
     select: { id: true },
   });
 
