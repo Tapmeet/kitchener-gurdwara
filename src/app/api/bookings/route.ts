@@ -547,41 +547,37 @@ export async function POST(req: Request) {
         // Long path: skip staff pool/headcount checks; we just hold the slot/hall.
       }
 
-      // ---- resolve a safe createdBy relation ----
+      // after you resolve `session`, before tx.booking.create(...)
       let createdByData: Record<string, any> = {};
       try {
-        const sid = session?.user?.id || null;
-        const semail = (session?.user as any)?.email || null;
+        const sid = (session as any)?.user?.id as string | undefined;
+        const semail = (session as any)?.user?.email as string | undefined;
 
-        // Prefer session user id if it actually exists in this DB
         if (sid) {
-          const exists = await tx.user.findUnique({
+          // ensure the user exists, then connect by id
+          const exists = await prisma.user.findUnique({
             where: { id: sid },
             select: { id: true },
           });
           if (exists) {
-            createdByData = { createdById: exists.id };
+            createdByData = { createdBy: { connect: { id: exists.id } } };
           }
-        }
-        // Fallback: connect or create by email (unique), useful after reseeds
-        if (!('createdById' in createdByData) && semail) {
+        } else if (semail) {
+          // optional: connect/create by session email
           createdByData = {
             createdBy: {
               connectOrCreate: {
-                where: { email: semail },
+                where: { email: semail.toLowerCase() },
                 create: {
-                  email: semail,
-                  name: (session?.user as any)?.name ?? null,
-                  role: 'VIEWER',
+                  email: semail.toLowerCase(),
+                  role: 'VIEWER' as const,
                 },
               },
             },
           };
         }
-        // (removed) No contactEmail fallback here; anonymous bookings remain with createdById = null.
-        // Bookings will be linked to the user on their first login in auth.ts (callbacks.signIn).
       } catch {
-        // omit relation silently; booking creation will still succeed
+        // leave createdByData = {}
       }
 
       const createdRaw = await tx.booking.create({
