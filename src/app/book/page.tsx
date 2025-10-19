@@ -10,13 +10,13 @@ export default async function BookPage({
   const created = sp?.created;
 
   return (
-    <div className='p-4 space-y-3'>
+    <>
       {created && (
         <div className='alert alert-success'>
           Booking submitted! Reference: <code>{created}</code>
         </div>
       )}
       <BookingForm />
-    </div>
+    </>
   );
 }

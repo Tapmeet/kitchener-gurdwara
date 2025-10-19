@@ -1,6 +1,7 @@
 // src/components/BookingForm.tsx
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
 import Script from 'next/script';
 import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
@@ -163,6 +164,7 @@ const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
 /* ---------- component ---------- */
 
 export default function BookingForm() {
+  const { data: session, status } = useSession();
   const [programTypes, setProgramTypes] = useState<ProgramType[]>([]);
 
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -170,10 +172,29 @@ export default function BookingForm() {
   const [submitting, setSubmitting] = useState(false);
   const [phone, setPhone] = useState<string>('');
   const [locationType, setLocationType] = useState<LocationType>('');
+  const [contactName, setContactName] = useState<string>('');
+  const [contactEmail, setContactEmail] = useState<string>('');
+  // track user edits so prefill won’t override manual changes
+  const editedRef = useRef({ name: false, email: false, phone: false });
 
   // Mount flag to keep initial SSR/CSR markup identical
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    const sUser = session?.user as any | undefined;
+    if (!sUser) return;
+    if (!editedRef.current.name && !contactName && sUser.name) {
+      setContactName(sUser.name);
+    }
+    if (!editedRef.current.email && !contactEmail && sUser.email) {
+      setContactEmail(String(sUser.email));
+    }
+    if (!editedRef.current.phone && !phone && sUser.phone) {
+      setPhone(formatPhoneLive(String(sUser.phone)));
+    }
+  }, [status, session, contactName, contactEmail, phone]);
 
   // Date + time (set after mount to avoid SSR/CSR clock differences)
   const [date, setDate] = useState<string>(''); // empty on SSR & first client render
@@ -395,6 +416,9 @@ export default function BookingForm() {
     setDate('');
     setStartHour24(7);
     setPhone('');
+    setContactName('');
+    setContactEmail('');
+    editedRef.current = { name: false, email: false, phone: false };
     setSelectedProgramId('');
     setAvailableHours([]);
     setAvailableMap({});
@@ -468,7 +492,7 @@ export default function BookingForm() {
       nextErrors.attendees = `Maximum ${MAX_ATTENDEES} attendees allowed.`;
     }
 
-    const contactEmailRaw = String(fd.get('contactEmail') || '').trim();
+    const contactEmailRaw = contactEmail.trim();
 
     const payload = {
       title: String(fd.get('title') || '').trim(),
@@ -554,19 +578,27 @@ export default function BookingForm() {
 
   return (
     <section className='section'>
-      {/* Floating toast (no layout shift) */}
-      <div aria-live='polite' aria-atomic='true'>
-        {success && (
-          <div className='pointer-events-none fixed inset-x-0 top-28 z-50 flex justify-center px-4'>
-            <div
-              className='pointer-events-auto alert alert-success shadow-lg max-w-lg w-full transition-opacity duration-300'
-              role='status'
-            >
-              {success}
-            </div>
-          </div>
-        )}
+      {/* Invisible live region (no layout impact) */}
+      <div
+        aria-live='polite'
+        aria-atomic='true'
+        className='sr-only'
+        role='status'
+      >
+        {success ?? ''}
       </div>
+
+      {/* Visual toast only when there’s a message */}
+      {success && (
+        <div className='pointer-events-none fixed inset-x-0 top-28 z-50 flex justify-center px-4'>
+          <div
+            className='pointer-events-auto alert alert-success shadow-lg max-w-lg w-full transition-opacity duration-300'
+            aria-hidden='true'
+          >
+            {success}
+          </div>
+        </div>
+      )}
 
       <div className='card p-4 md:p-6'>
         <h2 className='text-lg font-semibold mb-4'>
@@ -917,7 +949,12 @@ export default function BookingForm() {
                   name='contactName'
                   required
                   placeholder='Your full name'
-                  onChange={() => clearFieldError('contactName')}
+                  value={contactName}
+                  onChange={(e) => {
+                    editedRef.current.name = true;
+                    setContactName(e.target.value);
+                    clearFieldError('contactName');
+                  }}
                 />
                 {errors.contactName && (
                   <p className='text-xs text-red-600 mt-1'>
@@ -936,11 +973,13 @@ export default function BookingForm() {
                   placeholder='+1 519 555 1234 or +91 98765 43210'
                   value={phone}
                   onChange={(e) => {
+                    editedRef.current.phone = true;
                     setPhone(formatPhoneLive(e.target.value));
                     clearFieldError('contactPhone');
                   }}
                   onPaste={(e) => {
                     const text = e.clipboardData.getData('text');
+                    editedRef.current.phone = true;
                     setPhone(formatPhoneLive(text));
                     clearFieldError('contactPhone');
                     e.preventDefault();
@@ -961,7 +1000,12 @@ export default function BookingForm() {
                   type='email'
                   name='contactEmail'
                   placeholder='you@example.com'
-                  onChange={() => clearFieldError('contactEmail')}
+                  value={contactEmail}
+                  onChange={(e) => {
+                    editedRef.current.email = true;
+                    setContactEmail(e.target.value);
+                    clearFieldError('contactEmail');
+                  }}
                 />
                 {errors.contactEmail && (
                   <p className='text-xs text-red-600 mt-1'>
