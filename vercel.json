@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/housekeeping/expire-pending", "schedule": "*/15 * * * *" }
+  ]
+}
