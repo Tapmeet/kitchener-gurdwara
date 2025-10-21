@@ -3,49 +3,56 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-export const runtime = 'nodejs'; // Prisma needs Node runtime
-export const dynamic = 'force-dynamic'; // ensure not statically cached
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-// Any 64-bit key; single-arg TX lock (NOT the (bigint,bigint) overload)
+// Keep as string to avoid TS BigInt literal requirement
 const LOCK_KEY = '581234567890123456';
 
-/** Optional: lock down to Vercel Cron by CRON_SECRET (see step 3). */
+// Optional: protect the endpoint so only Vercel Cron can call it
 function checkAuth(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // allow locally if not set
-  const auth = req.headers.get('authorization');
-  return auth === `Bearer ${secret}`;
+  const s = process.env.CRON_SECRET;
+  if (!s) return true; // allow locally if not set
+  return req.headers.get('authorization') === `Bearer ${s}`;
 }
 
 export async function GET(req: NextRequest) {
   if (!checkAuth(req)) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
-  return POST(); // reuse POST logic
+  return POST();
 }
 
 export async function POST() {
-  // Do everything inside a transaction so the xact-lock is auto-released
-  const result = await prisma.$transaction(async (tx) => {
-    // Acquire a transaction-level advisory lock (fast fail)
-    const rows = await tx.$queryRaw<{ acquired: boolean }[]>`
-      SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS acquired
-    `;
-    const acquired = rows[0]?.acquired === true;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    if (!acquired) {
-      // IMPORTANT: return 200 so Vercel doesn’t mark the run as "failed"
-      return { ok: true, locked: true, expired: 0 };
-    }
+  // Single-statement CTE:
+  //  1) try to take a transaction-scoped advisory lock
+  //  2) if acquired, run the UPDATE
+  //  3) return both "locked" and "expired" in one round-trip
+  const rows = await prisma.$queryRaw<{ locked: boolean; expired: number }[]>`
+    WITH try_lock AS (
+      SELECT pg_try_advisory_xact_lock(${LOCK_KEY}::bigint) AS locked
+    ),
+    do_update AS (
+      UPDATE "Booking"
+      SET "status" = CAST('EXPIRED' AS "BookingStatus")
+      WHERE (SELECT locked FROM try_lock)
+        AND "status" = CAST('PENDING' AS "BookingStatus")
+        AND "createdAt" < ${cutoff}
+      RETURNING 1
+    )
+    SELECT
+      (SELECT locked FROM try_lock) AS locked,
+      (SELECT COUNT(*)::int FROM do_update) AS expired;
+  `;
 
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const res = await tx.booking.updateMany({
-      where: { status: 'PENDING', createdAt: { lt: cutoff } },
-      data: { status: 'EXPIRED' },
-    });
+  const locked = rows[0]?.locked === true;
+  const expired = rows[0]?.expired ?? 0;
 
-    return { ok: true, locked: false, expired: res.count };
-  });
-
-  return NextResponse.json(result);
+  // Return 200 on lock contention so Vercel Cron shows "success"
+  if (!locked) {
+    return NextResponse.json({ ok: true, locked: true, expired: 0 });
+  }
+  return NextResponse.json({ ok: true, locked: false, expired });
 }
