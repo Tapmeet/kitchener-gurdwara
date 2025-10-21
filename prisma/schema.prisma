@@ -142,6 +142,7 @@ model Booking {
   @@index([createdById])
   @@index([approvedById])
   @@index([contactEmail])
+  @@index([status, createdAt])
 }
 
 model BookingItem {
