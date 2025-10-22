@@ -36,3 +36,4 @@ Thumbs.db
 *.tmp
 *.swp
 .vercel
+.env*.local

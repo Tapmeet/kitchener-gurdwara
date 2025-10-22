@@ -23,7 +23,7 @@
     "// ---------- BUILD HOOKS ----------": "",
     "postinstall": "prisma generate",
     "// ---------- VERCEL (manual deploys) ----------": "",
-    "vercel:link": "vercel link --yes",
+    "vercel:link": "vercel link",
     "vercel:pull:development": "vercel pull --yes --environment=development",
     "vercel:pull:preview": "vercel pull --yes --environment=preview",
     "vercel:pull:prod": "vercel pull --yes --environment=production",
