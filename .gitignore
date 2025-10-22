@@ -10,10 +10,8 @@ out/
 # env & local only
 .env
 .env.local
+.env.preview
 .env.production
-.env.production.local
-.env.development
-.env.development.local
 
 # prisma
 prisma/dev.db*
@@ -37,5 +35,4 @@ Thumbs.db
 *.log
 *.tmp
 *.swp
-
 .vercel
