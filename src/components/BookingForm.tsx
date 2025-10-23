@@ -7,7 +7,7 @@ import { CreateBookingSchema } from '@/lib/validation';
 import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { formatPhoneLive, toE164Generic } from '@/lib/phone';
 
-const MAX_ATTENDEES = Number(process.env.NEXT_PUBLIC_MAX_ATTENDEES ?? 300);
+const MAX_ATTENDEES = Number(process.env.NEXT_PUBLIC_MAX_ATTENDEES);
 
 /* ---------- types ---------- */
 type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
