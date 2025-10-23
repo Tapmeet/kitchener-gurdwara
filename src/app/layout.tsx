@@ -87,7 +87,7 @@ export default async function RootLayout({
           <footer className='border-t border-black/5'>
             <div className='container mx-auto px-4 py-6 text-sm text-gray-500'>
               {/* If you ever see a mismatch here (rare), wrap year in <span suppressHydrationWarning> */}
-              © {year} Golden Triangle Sikh Association Booking
+              © {year} Golden Triangle Sikh Association - Developed by Tapmeet Singh
             </div>
           </footer>
 
