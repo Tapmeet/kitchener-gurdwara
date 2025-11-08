@@ -656,8 +656,15 @@ export async function POST(req: Request) {
     }
 
     // notifications
+    // notifications
     const { date: startDate, time: startTime } = toLocalParts(created.start);
     const { time: endTime } = toLocalParts(created.end);
+
+    // Build a manage URL for admins, if NEXTAUTH_URL is set
+    const baseUrl = process.env.NEXTAUTH_URL?.replace(/\/+$/, '') ?? '';
+    const manageUrl = baseUrl
+      ? `${baseUrl}/admin/bookings/${created.id}`
+      : null;
 
     const adminHtml = renderBookingEmailAdmin({
       title: created.title,
@@ -667,9 +674,12 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
-      contactName: created.contactName,
-      contactPhone: created.contactPhone,
-      attendees: created.attendees,
+      requesterName: created.contactName,
+      requesterEmail: created.contactEmail,
+      requesterPhone: created.contactPhone,
+      notes: created.notes,
+      sourceLabel: 'Public booking form',
+      manageUrl,
     });
 
     const customerHtml = renderBookingEmailCustomer({
@@ -693,20 +703,20 @@ export async function POST(req: Request) {
     });
 
     const adminRecipients = getAdminEmails();
-    const customerEmail = (parsed.data as any).contactEmail as string | null;
+    const customerEmail = created.contactEmail;
 
     await Promise.allSettled([
       adminRecipients.length
         ? sendEmail({
             to: adminRecipients,
-            subject: 'New Path/Kirtan Booking (Pending Approval)',
+            subject: 'New Path/Kirtan booking (Pending approval)',
             html: adminHtml,
           })
         : Promise.resolve(),
       customerEmail
         ? sendEmail({
             to: customerEmail,
-            subject: 'Thanks! Your booking was received (Pending Approval)',
+            subject: 'Thank you — your booking request was received',
             html: customerHtml,
           })
         : Promise.resolve(),
