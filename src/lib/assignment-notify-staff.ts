@@ -22,6 +22,8 @@ const twilioClient =
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
 const smsFrom = process.env.TWILIO_SMS_FROM || '';
+const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Tapmeet Singh';
+const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+14379864490';
 
 function okToSend() {
   if (!ENABLED) return false;
@@ -104,20 +106,35 @@ export async function notifyAssignmentsStaff(
     const lines = byStaff.get(sId)!.lines;
     if (!lines.length) continue;
 
-    const subject = `[Assigned] ${booking.title} (${fmt(booking.start)})`;
+    const subject = `Seva assignment – ${booking.title} (${fmt(booking.start)})`;
+
+    // contact line used in both email + SMS
+    const contactLine = CONTACT_PHONE
+      ? `If you cannot attend, please contact ${CONTACT_NAME} at ${CONTACT_PHONE}.`
+      : `If you cannot attend, please contact ${CONTACT_NAME}.`;
+
     const html = `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
-        <h2>New Assignment</h2>
-        <p><b>Event:</b> ${booking.title}</p>
-        <p><b>When:</b> ${fmt(booking.start)} – ${fmt(booking.end)}</p>
-        <p><b>Location:</b> ${locLine}</p>
-        <p><b>You are assigned to:</b></p>
-        <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
-        <p>Vaheguru Ji Ka Khalsa, Vaheguru Ji Ki Fateh.</p>
-      </div>`;
-    const sms = `Assigned: ${booking.title}
-${fmt(booking.start)} - ${fmt(booking.end)}
-${locLine}
-${lines.join(', ')}`;
+  <h2>New Seva Assignment</h2>
+  <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh 🙏</p>
+  <p><b>Event:</b> ${booking.title}</p>
+  <p><b>When:</b> ${fmt(booking.start)} – ${fmt(booking.end)}</p>
+  <p><b>Location:</b> ${locLine}</p>
+  <p><b>Your seva:</b></p>
+  <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+  <p>${contactLine}</p>
+  <p>Thank you for your seva.</p>
+</div>`;
+
+    const smsLines = [
+      'Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh 🙏',
+      `You have been assigned seva for "${booking.title}".`,
+      `When: ${fmt(booking.start)} – ${fmt(booking.end)}`,
+      `Location: ${locLine}`,
+      `Seva: ${lines.join(', ')}`,
+      contactLine,
+    ];
+
+    const sms = smsLines.join('\n');
 
     if (dryRun) {
       console.log(
