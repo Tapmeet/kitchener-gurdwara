@@ -20,6 +20,16 @@ const twilioSmsFrom = process.env.TWILIO_SMS_FROM;
 const twilioClient =
   twilioSid && twilioToken ? twilio(twilioSid, twilioToken) : null;
 
+const BOOKING_CONTACT_NAME =
+  process.env.BOOKING_CONTACT_NAME ||
+  process.env.ASSIGN_NOTIFY_CONTACT_NAME ||
+  'the Gurdwara office';
+
+const BOOKING_CONTACT_PHONE =
+  process.env.BOOKING_CONTACT_PHONE ||
+  process.env.ASSIGN_NOTIFY_CONTACT_PHONE ||
+  '';
+
 // ---------- utils ----------
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -144,24 +154,60 @@ export function renderBookingEmailAdmin(p: {
   locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
   hallName?: string | null;
   address?: string | null;
-  contactName: string;
-  contactPhone: string;
-  attendees?: number;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  requesterPhone?: string | null;
+  notes?: string | null;
+  sourceLabel?: string | null; // e.g. "Public form"
+  manageUrl?: string | null; // admin link, if you have one
 }) {
   const where =
     p.locationType === 'GURDWARA'
       ? p.hallName
         ? `Hall: ${p.hallName}`
         : 'Gurdwara'
-      : `Address: ${p.address ?? ''}`;
+      : p.address
+        ? p.address
+        : 'Outside location (address not provided)';
+
+  const requesterLines = [
+    p.requesterName && `<li><b>Name:</b> ${p.requesterName}</li>`,
+    p.requesterEmail && `<li><b>Email:</b> ${p.requesterEmail}</li>`,
+    p.requesterPhone && `<li><b>Phone:</b> ${p.requesterPhone}</li>`,
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const notesBlock = p.notes
+    ? `<p><b>Notes from requester:</b><br/>${p.notes}</p>`
+    : '';
+
+  const sourceLine = p.sourceLabel
+    ? `<p><b>Source:</b> ${p.sourceLabel}</p>`
+    : '';
+
+  const manageLine = p.manageUrl
+    ? `<p><a href="${p.manageUrl}">Open this booking in the admin dashboard</a></p>`
+    : '';
 
   return `
-    <h2>New Path/Kirtan Booking</h2>
-    <p><strong>${p.title}</strong></p>
-    <p>${p.date} ${p.startLocal} – ${p.endLocal}</p>
-    <p>${where}</p>
-    <p>Attendees: ${p.attendees ?? '—'}</p>
-    <p>Contact: ${p.contactName} (${p.contactPhone})</p>
+    <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
+    <h2>New booking request</h2>
+
+    <p><b>Event:</b> ${p.title}</p>
+    <p><b>When:</b> ${p.date} ${p.startLocal} – ${p.endLocal}</p>
+    <p><b>Location:</b> ${where}</p>
+
+    <h3>Requester details</h3>
+    <ul>
+      ${requesterLines || '<li>(no contact details provided)</li>'}
+    </ul>
+
+    ${notesBlock}
+    ${sourceLine}
+    ${manageLine}
+
+    <p>Please review and confirm or follow up with the requester.</p>
   `;
 }
 
@@ -181,16 +227,23 @@ export function renderBookingEmailCustomer(p: {
         : 'Gurdwara'
       : `Address: ${p.address ?? ''}`;
 
+  const contactLine = BOOKING_CONTACT_PHONE
+    ? `If you need to update or cancel your request, please contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
+    : `If you need to update or cancel your request, please contact ${BOOKING_CONTACT_NAME}.`;
+
   return `
-    <h2>Thank you — your booking is received</h2>
+    <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
+    <h2>Thank you — your booking request has been received</h2>
+
     <p><strong>${p.title}</strong></p>
     <p>${p.date} ${p.startLocal} – ${p.endLocal}</p>
     <p>${where}</p>
-    <p>We’ll confirm details with you soon.</p>
+
+    <p>We will review your request and confirm the booking with you soon.</p>
+    <p>${contactLine}</p>
   `;
 }
 
-// Generic text body reused for SMS (FORMAT UNCHANGED)
 export function renderBookingText(p: {
   title: string;
   date: string;
@@ -206,9 +259,81 @@ export function renderBookingText(p: {
         ? `Hall: ${p.hallName}`
         : 'Gurdwara'
       : `Address: ${p.address ?? ''}`;
-  return `✅ Booking received
-${p.title}
-${p.date} ${p.startLocal}–${p.endLocal}
-${where}
-We’ll confirm with you soon.`;
+
+  const contactLine = BOOKING_CONTACT_PHONE
+    ? `If you need changes, contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
+    : `If you need changes, contact ${BOOKING_CONTACT_NAME}.`;
+
+  return (
+    `Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.\n` +
+    `Booking request received: ${p.title}\n` +
+    `${p.date} ${p.startLocal}-${p.endLocal}\n` +
+    `${where}\n` +
+    `We will confirm your booking with you soon.\n` +
+    contactLine
+  );
+}
+
+export function renderBookingEmailCustomerConfirmed(p: {
+  title: string;
+  date: string;
+  startLocal: string;
+  endLocal: string;
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+  hallName?: string | null;
+  address?: string | null;
+}) {
+  const where =
+    p.locationType === 'GURDWARA'
+      ? p.hallName
+        ? `Hall: ${p.hallName}`
+        : 'Gurdwara'
+      : `Address: ${p.address ?? ''}`;
+
+  const contactLine = BOOKING_CONTACT_PHONE
+    ? `If you need to change or cancel this booking, please contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
+    : `If you need to change or cancel this booking, please contact ${BOOKING_CONTACT_NAME}.`;
+
+  return `
+    <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
+    <h2>Your booking has been confirmed</h2>
+
+    <p><strong>${p.title}</strong></p>
+    <p>${p.date} ${p.startLocal} – ${p.endLocal}</p>
+    <p>${where}</p>
+
+    <p>Please arrive 10–15 minutes early and speak to the coordinator if needed.</p>
+    <p>${contactLine}</p>
+    <p>Thank you.</p>
+  `;
+}
+
+export function renderBookingTextConfirmed(p: {
+  title: string;
+  date: string;
+  startLocal: string;
+  endLocal: string;
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+  hallName?: string | null;
+  address?: string | null;
+}) {
+  const where =
+    p.locationType === 'GURDWARA'
+      ? p.hallName
+        ? `Hall: ${p.hallName}`
+        : 'Gurdwara'
+      : `Address: ${p.address ?? ''}`;
+
+  const contactLine = BOOKING_CONTACT_PHONE
+    ? `If you need changes, contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
+    : `If you need changes, contact ${BOOKING_CONTACT_NAME}.`;
+
+  return (
+    `Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.\n` +
+    `Your booking is confirmed: ${p.title}\n` +
+    `${p.date} ${p.startLocal}-${p.endLocal}\n` +
+    `${where}\n` +
+    `Please arrive 10–15 minutes early.\n` +
+    contactLine
+  );
 }

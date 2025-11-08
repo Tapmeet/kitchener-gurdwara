@@ -22,6 +22,8 @@ const twilioClient =
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
 const smsFrom = process.env.TWILIO_SMS_FROM || '';
+const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Tapmeet Singh';
+const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+14379864490';
 
 function okToSend() {
   if (!ENABLED) return false;
@@ -101,39 +103,77 @@ export async function notifyAssignmentsStaff(
   for (const sId of staffIds) {
     const s = staffMap.get(sId);
     if (!s) continue;
+
     const lines = byStaff.get(sId)!.lines;
     if (!lines.length) continue;
 
-    const subject = `[Assigned] ${booking.title} (${fmt(booking.start)})`;
+    // Normalize contact info
+    const email = (s.email ?? '').trim();
+    const phoneRaw = (s.phone ?? '').trim();
+    const phone = phoneRaw.replace(/\s+/g, '');
+
+    const hasEmail = !!email;
+    const hasSms = !!phone && /^\+\d{7,15}$/.test(phone); // basic E.164 check
+
+    // If we have neither, don't even try
+    if (!hasEmail && !hasSms) {
+      console.warn('[ASSIGN_NOTIFY] Skipping staff with no contact info:', {
+        id: s.id,
+        name: s.name,
+      });
+      continue;
+    }
+
+    const subject = `Seva assignment – ${booking.title} (${fmt(
+      booking.start
+    )})`;
+
+    // contact line used in both email + SMS
+    const contactLine = CONTACT_PHONE
+      ? `If you cannot attend, please contact ${CONTACT_NAME} at ${CONTACT_PHONE}.`
+      : `If you cannot attend, please contact ${CONTACT_NAME}.`;
+
     const html = `<div style="font-family:system-ui,Segoe UI,Roboto,Arial">
-        <h2>New Assignment</h2>
-        <p><b>Event:</b> ${booking.title}</p>
-        <p><b>When:</b> ${fmt(booking.start)} – ${fmt(booking.end)}</p>
-        <p><b>Location:</b> ${locLine}</p>
-        <p><b>You are assigned to:</b></p>
-        <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
-        <p>Vaheguru Ji Ka Khalsa, Vaheguru Ji Ki Fateh.</p>
-      </div>`;
-    const sms = `Assigned: ${booking.title}
-${fmt(booking.start)} - ${fmt(booking.end)}
-${locLine}
-${lines.join(', ')}`;
+  <h2>New Seva Assignment</h2>
+  <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh 🙏</p>
+  <p><b>Event:</b> ${booking.title}</p>
+  <p><b>When:</b> ${fmt(booking.start)} – ${fmt(booking.end)}</p>
+  <p><b>Location:</b> ${locLine}</p>
+  <p><b>Your seva:</b></p>
+  <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+  <p>${contactLine}</p>
+  <p>Thank you for your seva.</p>
+</div>`;
+
+    const smsLines = [
+      'Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh 🙏',
+      `You have been assigned seva for "${booking.title}".`,
+      `When: ${fmt(booking.start)} – ${fmt(booking.end)}`,
+      `Location: ${locLine}`,
+      `Seva: ${lines.join(', ')}`,
+      contactLine,
+    ];
+
+    const sms = smsLines.join('\n');
 
     if (dryRun) {
       console.log(
-        `[DRY RUN] Would notify ${s.name}${s.email ? ' <' + s.email + '>' : ''}${
-          s.phone ? ' ' + s.phone : ''
-        }:`,
-        lines
+        `[DRY RUN] Would notify ${s.name} (${s.id}) via ${[
+          hasEmail ? 'email' : '',
+          hasSms ? 'sms' : '',
+        ]
+          .filter(Boolean)
+          .join(' & ')}:`,
+        { email, phone, lines }
       );
       continue;
     }
 
-    if (canEmail && resend && s.email) {
+    if (canEmail && resend && hasEmail) {
       try {
         await resend.emails.send({
           from: fromEmail,
-          to: s.email,
+          to: email,
           subject,
           html,
         });
@@ -142,17 +182,18 @@ ${lines.join(', ')}`;
         console.error('Resend email failed', e);
       }
     }
-    if (canSms && twilioClient && s.phone && /^\+\d+$/.test(s.phone)) {
+
+    if (canSms && twilioClient && hasSms) {
       if (!smsFrom)
         console.warn(
           'ASSIGN_NOTIFY: TWILIO_SMS_FROM is empty; skipping SMS for',
-          s.phone
+          phone
         );
       else {
         try {
           await twilioClient.messages.create({
             from: smsFrom,
-            to: s.phone,
+            to: phone,
             body: sms,
           });
           sent++;
@@ -162,6 +203,7 @@ ${lines.join(', ')}`;
       }
     }
   }
+
   return { sent, dryRun };
 }
 

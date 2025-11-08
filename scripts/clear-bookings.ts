@@ -24,8 +24,8 @@ main()
     await prisma.$disconnect();
   });
 
-//dev
-// npx tsx scripts/clear-bookings.ts
+//Dev
+//npx dotenv -e .env.local -- tsx scripts/clear-bookings.ts
 
-//prod
-// npx dotenv -e .env.production -- npx tsx scripts/clear-bookings.ts
+//Prod
+//npx dotenv -e .env.production -- npx tsx scripts/clear-bookings.ts
