@@ -103,10 +103,30 @@ export async function notifyAssignmentsStaff(
   for (const sId of staffIds) {
     const s = staffMap.get(sId);
     if (!s) continue;
+
     const lines = byStaff.get(sId)!.lines;
     if (!lines.length) continue;
 
-    const subject = `Seva assignment – ${booking.title} (${fmt(booking.start)})`;
+    // Normalize contact info
+    const email = (s.email ?? '').trim();
+    const phoneRaw = (s.phone ?? '').trim();
+    const phone = phoneRaw.replace(/\s+/g, '');
+
+    const hasEmail = !!email;
+    const hasSms = !!phone && /^\+\d{7,15}$/.test(phone); // basic E.164 check
+
+    // If we have neither, don't even try
+    if (!hasEmail && !hasSms) {
+      console.warn('[ASSIGN_NOTIFY] Skipping staff with no contact info:', {
+        id: s.id,
+        name: s.name,
+      });
+      continue;
+    }
+
+    const subject = `Seva assignment – ${booking.title} (${fmt(
+      booking.start
+    )})`;
 
     // contact line used in both email + SMS
     const contactLine = CONTACT_PHONE
@@ -138,19 +158,22 @@ export async function notifyAssignmentsStaff(
 
     if (dryRun) {
       console.log(
-        `[DRY RUN] Would notify ${s.name}${s.email ? ' <' + s.email + '>' : ''}${
-          s.phone ? ' ' + s.phone : ''
-        }:`,
-        lines
+        `[DRY RUN] Would notify ${s.name} (${s.id}) via ${[
+          hasEmail ? 'email' : '',
+          hasSms ? 'sms' : '',
+        ]
+          .filter(Boolean)
+          .join(' & ')}:`,
+        { email, phone, lines }
       );
       continue;
     }
 
-    if (canEmail && resend && s.email) {
+    if (canEmail && resend && hasEmail) {
       try {
         await resend.emails.send({
           from: fromEmail,
-          to: s.email,
+          to: email,
           subject,
           html,
         });
@@ -159,17 +182,18 @@ export async function notifyAssignmentsStaff(
         console.error('Resend email failed', e);
       }
     }
-    if (canSms && twilioClient && s.phone && /^\+\d+$/.test(s.phone)) {
+
+    if (canSms && twilioClient && hasSms) {
       if (!smsFrom)
         console.warn(
           'ASSIGN_NOTIFY: TWILIO_SMS_FROM is empty; skipping SMS for',
-          s.phone
+          phone
         );
       else {
         try {
           await twilioClient.messages.create({
             from: smsFrom,
-            to: s.phone,
+            to: phone,
             body: sms,
           });
           sent++;
@@ -179,6 +203,7 @@ export async function notifyAssignmentsStaff(
       }
     }
   }
+
   return { sent, dryRun };
 }
 
