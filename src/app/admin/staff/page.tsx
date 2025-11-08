@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
+import { StaffSaveButton } from './StaffSaveButton';
 
 function isPriv(role?: string | null) {
   return role === 'ADMIN';
@@ -177,12 +178,7 @@ export default async function Page() {
                       >
                         ICS
                       </a>
-                      <button
-                        type='submit'
-                        className='inline-flex items-center rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1'
-                      >
-                        Save
-                      </button>
+                      <StaffSaveButton />
                     </form>
                   </td>
                 </tr>
