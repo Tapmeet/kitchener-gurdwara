@@ -1,3 +1,4 @@
+// src/app/login/page.tsx
 'use client';
 import { FormEvent, useState, useEffect, useMemo } from 'react';
 import { signIn } from 'next-auth/react';
@@ -81,6 +82,7 @@ export default function LoginPage() {
     () => sanitizeCallbackUrl(params.get('callbackUrl')),
     [params]
   );
+  
   const urlError = params.get('error');
 
   const [email, setEmail] = useState('');
