@@ -34,6 +34,17 @@ import { ProgramCategory } from '@prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
+const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
+const NODE_ENV = process.env.NODE_ENV;
+
+const isProdEnv =
+  VERCEL_ENV === 'production' || (!VERCEL_ENV && NODE_ENV === 'production'); // non-Vercel prod fallback
+
+const bookingNotificationsEnabled =
+  process.env.BOOKING_NOTIFICATIONS_ENABLED !== '0';
+
+const shouldSendBookingNotifications = isProdEnv && bookingNotificationsEnabled;
+
 // ------------ lightweight rate limit (per-IP) -------------
 const buckets = new Map<string, { count: number; resetAt: number }>();
 function rateLimit(key: string, limit = 10, windowMs = 60_000) {
@@ -728,29 +739,37 @@ export async function POST(req: Request) {
       hallName: created.hall?.name ?? null,
       address: created.address,
     });
-
+    
     const adminRecipients = getAdminEmails();
     const customerEmail = created.contactEmail;
 
-    await Promise.allSettled([
-      adminRecipients.length
-        ? sendEmail({
-            to: adminRecipients,
-            subject: 'New Path/Kirtan booking (Pending approval)',
-            html: adminHtml,
-          })
-        : Promise.resolve(),
-      customerEmail
-        ? sendEmail({
-            to: customerEmail,
-            subject: 'Thank you — your booking request was received',
-            html: customerHtml,
-          })
-        : Promise.resolve(),
-      created.contactPhone
-        ? sendSms({ toE164: created.contactPhone, text: smsText })
-        : Promise.resolve(),
-    ]);
+    if (shouldSendBookingNotifications) {
+      await Promise.allSettled([
+        adminRecipients.length
+          ? sendEmail({
+              to: adminRecipients,
+              subject: 'New Path/Kirtan booking (Pending approval)',
+              html: adminHtml,
+            })
+          : Promise.resolve(),
+        customerEmail
+          ? sendEmail({
+              to: customerEmail,
+              subject: 'Thank you — your booking request was received',
+              html: customerHtml,
+            })
+          : Promise.resolve(),
+        created.contactPhone
+          ? sendSms({ toE164: created.contactPhone, text: smsText })
+          : Promise.resolve(),
+      ]);
+    } else {
+      console.log('[bookings] Skipping booking email/SMS', {
+        VERCEL_ENV,
+        NODE_ENV,
+        bookingNotificationsEnabled,
+      });
+    }
 
     return NextResponse.json(
       { id: created.id, status: 'PENDING' },
