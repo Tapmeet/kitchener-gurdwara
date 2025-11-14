@@ -27,5 +27,5 @@ main()
 //Dev
 //npx dotenv -e .env.local -- tsx scripts/clear-bookings.ts
 
-//Prod
-//npx dotenv -e .env.production -- npx tsx scripts/clear-bookings.ts
+//Preview
+//npx dotenv -e .env.preview -- npx tsx scripts/clear-bookings.ts

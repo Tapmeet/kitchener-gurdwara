@@ -30,8 +30,20 @@ import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 import { pickFirstFittingHall } from '@/lib/halls';
+import { ProgramCategory } from '@prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+
+const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
+const NODE_ENV = process.env.NODE_ENV;
+
+const isProdEnv =
+  VERCEL_ENV === 'production' || (!VERCEL_ENV && NODE_ENV === 'production'); // non-Vercel prod fallback
+
+const bookingNotificationsEnabled =
+  process.env.BOOKING_NOTIFICATIONS_ENABLED !== '0';
+
+const shouldSendBookingNotifications = isProdEnv && bookingNotificationsEnabled;
 
 // ------------ lightweight rate limit (per-IP) -------------
 const buckets = new Map<string, { count: number; resetAt: number }>();
@@ -129,6 +141,14 @@ type CreatedBooking = {
   notes: string | null;
   attendees: number;
   hall: { name: string } | null;
+  items: {
+    id: string;
+    programType: {
+      name: string;
+      category: ProgramCategory;
+      durationMinutes: number | null;
+    };
+  }[];
 };
 
 export async function POST(req: Request) {
@@ -226,6 +246,7 @@ export async function POST(req: Request) {
         durationMinutes: true,
         // needed for trailing-kirtan server guard
         trailingKirtanMinutes: true,
+        category: true,
       },
     });
 
@@ -254,12 +275,23 @@ export async function POST(req: Request) {
 
     // Headcount required (sum over items)
     const headcountRequired = programs
-      .map((p) =>
-        Math.max(
-          p.peopleRequired ?? 0,
-          (p.minPathers ?? 0) + (p.minKirtanis ?? 0)
-        )
-      )
+      .map((p) => {
+        const minSum = (p.minPathers ?? 0) + (p.minKirtanis ?? 0);
+
+        // Long pure-path programs (Akhand-style): don't treat peopleRequired as
+        // "every hour needs a 5-person team". Concurrency is defined by min pathers.
+        const isLongPathItem =
+          p.category === ProgramCategory.PATH &&
+          (p.durationMinutes ?? 0) >= 36 * 60 && // 36h+ => multi-day
+          (p.minKirtanis ?? 0) === 0;
+
+        if (isLongPathItem) {
+          // At least 1 person, but no massive over-reservation
+          return Math.max(minSum, 1);
+        }
+
+        return Math.max(p.peopleRequired ?? 0, minSum);
+      })
       .reduce((a, b) => a + b, 0);
 
     // How long is this block?
@@ -442,6 +474,8 @@ export async function POST(req: Request) {
                   minPathers: true,
                   minKirtanis: true,
                   peopleRequired: true,
+                  durationMinutes: true,
+                  category: true,
                 },
               },
             },
@@ -471,6 +505,18 @@ export async function POST(req: Request) {
           .map((it: any) => {
             const pt: any = it.programType;
             const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+
+            const isLongPathItem =
+              pt.category === ProgramCategory.PATH &&
+              (pt.durationMinutes ?? 0) >= 36 * 60 &&
+              (pt.minKirtanis ?? 0) === 0;
+
+            if (isLongPathItem) {
+              // For Akhand / long continuous Path, don't reserve a 5-person team for
+              // every single hour over 2 days. Concurrency is driven by min pathers.
+              return Math.max(minSum, 1);
+            }
+
             return Math.max(pt.peopleRequired ?? 0, minSum);
           })
           .reduce((a: number, b: number) => a + b, 0);
@@ -607,7 +653,20 @@ export async function POST(req: Request) {
             })),
           },
         },
-        include: { hall: { select: { name: true } } },
+        include: {
+          hall: { select: { name: true } },
+          items: {
+            include: {
+              programType: {
+                select: {
+                  name: true,
+                  category: true,
+                  durationMinutes: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       const normalized: CreatedBooking = {
@@ -624,6 +683,14 @@ export async function POST(req: Request) {
         notes: createdRaw.notes,
         attendees: createdRaw.attendees,
         hall: createdRaw.hall ? { name: createdRaw.hall.name } : null,
+        items: createdRaw.items.map((it) => ({
+          id: it.id,
+          programType: {
+            name: it.programType.name,
+            category: it.programType.category,
+            durationMinutes: it.programType.durationMinutes,
+          },
+        })),
       };
       return normalized;
     });
@@ -666,7 +733,14 @@ export async function POST(req: Request) {
       ? `${baseUrl}/admin/bookings/${created.id}`
       : null;
 
+    const emailPrograms = created.items.map((it) => ({
+      name: it.programType.name,
+      category: it.programType.category,
+      durationMinutes: it.programType.durationMinutes,
+    }));
+
     const adminHtml = renderBookingEmailAdmin({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -674,15 +748,18 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      attendees: created.attendees,
       requesterName: created.contactName,
       requesterEmail: created.contactEmail,
       requesterPhone: created.contactPhone,
       notes: created.notes,
       sourceLabel: 'Public booking form',
       manageUrl,
+      programs: emailPrograms,
     });
 
     const customerHtml = renderBookingEmailCustomer({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -690,9 +767,12 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      attendees: created.attendees,
+      programs: emailPrograms,
     });
 
     const smsText = renderBookingText({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -700,30 +780,39 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      programs: emailPrograms,
     });
 
     const adminRecipients = getAdminEmails();
     const customerEmail = created.contactEmail;
 
-    await Promise.allSettled([
-      adminRecipients.length
-        ? sendEmail({
-            to: adminRecipients,
-            subject: 'New Path/Kirtan booking (Pending approval)',
-            html: adminHtml,
-          })
-        : Promise.resolve(),
-      customerEmail
-        ? sendEmail({
-            to: customerEmail,
-            subject: 'Thank you — your booking request was received',
-            html: customerHtml,
-          })
-        : Promise.resolve(),
-      created.contactPhone
-        ? sendSms({ toE164: created.contactPhone, text: smsText })
-        : Promise.resolve(),
-    ]);
+    if (shouldSendBookingNotifications) {
+      await Promise.allSettled([
+        adminRecipients.length
+          ? sendEmail({
+              to: adminRecipients,
+              subject: 'New Path/Kirtan booking (Pending approval)',
+              html: adminHtml,
+            })
+          : Promise.resolve(),
+        customerEmail
+          ? sendEmail({
+              to: customerEmail,
+              subject: 'Thank you — your booking request was received',
+              html: customerHtml,
+            })
+          : Promise.resolve(),
+        created.contactPhone
+          ? sendSms({ toE164: created.contactPhone, text: smsText })
+          : Promise.resolve(),
+      ]);
+    } else {
+      console.log('[bookings] Skipping booking email/SMS', {
+        VERCEL_ENV,
+        NODE_ENV,
+        bookingNotificationsEnabled,
+      });
+    }
 
     return NextResponse.json(
       { id: created.id, status: 'PENDING' },
