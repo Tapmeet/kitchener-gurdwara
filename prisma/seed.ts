@@ -350,7 +350,7 @@ async function main() {
   // Akhand Path (48h Path only, rotations + closing double)
   await upsertProgram('Akhand Path', ProgramCategory.PATH, {
     durationMinutes: 48 * 60,
-    peopleRequired: 5, // not used for FLEX here
+    peopleRequired: 2, // not used for FLEX here
     minPathers: 1,
     minKirtanis: 0,
     trailingKirtanMinutes: 0,

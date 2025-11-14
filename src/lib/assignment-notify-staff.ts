@@ -6,7 +6,15 @@ import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 
 const ENABLED = process.env.ASSIGN_NOTIFICATIONS === '1';
 const CHANNELS = (process.env.ASSIGN_NOTIFY_CHANNELS || 'both').toLowerCase();
-const IN_DEV = process.env.NODE_ENV !== 'production';
+
+// Env detection
+const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
+const NODE_ENV = process.env.NODE_ENV;
+const isProdEnv =
+  VERCEL_ENV === 'production' || (!VERCEL_ENV && NODE_ENV === 'production');
+const isLocalDev = NODE_ENV === 'development' && !VERCEL_ENV;
+
+// Optional dev override (only for real local dev if you ever want it)
 const ALLOW_IN_DEV = process.env.ASSIGN_NOTIFY_IN_DEV === '1';
 
 const canEmail = CHANNELS === 'email' || CHANNELS === 'both';
@@ -22,13 +30,20 @@ const twilioClient =
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
 const smsFrom = process.env.TWILIO_SMS_FROM || '';
-const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Tapmeet Singh';
-const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+14379864490';
+const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Manjot Singh';
+const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+15144586202';
 
 function okToSend() {
   if (!ENABLED) return false;
-  if (IN_DEV && !ALLOW_IN_DEV) return false;
-  return true;
+
+  // Only send in real production…
+  if (isProdEnv) return true;
+
+  // …optionally allow *local* dev if you explicitly turn it on
+  if (isLocalDev && ALLOW_IN_DEV) return true;
+
+  // No notifications in preview or normal dev by default
+  return false;
 }
 
 function fmt(d: Date | string | number) {

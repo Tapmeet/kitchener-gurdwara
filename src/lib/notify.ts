@@ -1,8 +1,81 @@
 // lib/notify.ts
-// Email via Resend HTTP API. SMS via Twilio.
-
 import twilio from 'twilio';
 import 'server-only';
+
+type EmailProgramSummary = {
+  name: string;
+  category?: string;
+  durationMinutes?: number | null;
+};
+
+type AdminEmailArgs = {
+  bookingId: string;
+  title: string;
+  date: string;
+  startLocal: string;
+  endLocal: string;
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+  hallName: string | null;
+  address: string | null;
+  attendees: number;
+  requesterName: string;
+  requesterEmail: string | null;
+  requesterPhone: string;
+  notes: string | null;
+  sourceLabel: string;
+  manageUrl: string | null;
+  programs?: EmailProgramSummary[];
+};
+
+type CustomerEmailArgs = {
+  bookingId: string;
+  title: string;
+  date: string;
+  startLocal: string;
+  endLocal: string;
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+  hallName: string | null;
+  address: string | null;
+  attendees: number;
+  programs?: EmailProgramSummary[];
+};
+
+type BookingTextArgs = {
+  bookingId: string;
+  title: string;
+  date: string;
+  startLocal: string;
+  endLocal: string;
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+  hallName: string | null;
+  address: string | null;
+  programs?: EmailProgramSummary[];
+};
+
+function fmtLocation(
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA',
+  hallName: string | null,
+  address: string | null
+) {
+  if (locationType === 'GURDWARA') {
+    return hallName ? `Gurdwara — ${hallName}` : 'Gurdwara';
+  }
+  return address ? `Outside — ${address}` : 'Outside booking';
+}
+
+function fmtPrograms(programs?: EmailProgramSummary[]) {
+  if (!programs?.length) return '<em>No specific program types recorded.</em>';
+  return programs
+    .map((p) => {
+      const dur =
+        typeof p.durationMinutes === 'number' && p.durationMinutes > 0
+          ? ` (${p.durationMinutes} min)`
+          : '';
+      const cat = p.category ? ` [${p.category}]` : '';
+      return `<li>${p.name}${cat}${dur}</li>`;
+    })
+    .join('');
+}
 
 // ---- Resend (Email) ----
 const resendKey = process.env.RESEND_API_KEY;
@@ -146,132 +219,138 @@ export async function sendSms({
 
 /* -------- message bodies (email + SMS) -------- */
 
-export function renderBookingEmailAdmin(p: {
-  title: string;
-  date: string;
-  startLocal: string;
-  endLocal: string;
-  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
-  hallName?: string | null;
-  address?: string | null;
-  requesterName?: string | null;
-  requesterEmail?: string | null;
-  requesterPhone?: string | null;
-  notes?: string | null;
-  sourceLabel?: string | null; // e.g. "Public form"
-  manageUrl?: string | null; // admin link, if you have one
-}) {
-  const where =
-    p.locationType === 'GURDWARA'
-      ? p.hallName
-        ? `Hall: ${p.hallName}`
-        : 'Gurdwara'
-      : p.address
-        ? p.address
-        : 'Outside location (address not provided)';
+export function renderBookingEmailAdmin(args: AdminEmailArgs): string {
+  const {
+    bookingId,
+    title,
+    date,
+    startLocal,
+    endLocal,
+    locationType,
+    hallName,
+    address,
+    attendees,
+    requesterName,
+    requesterEmail,
+    requesterPhone,
+    notes,
+    sourceLabel,
+    manageUrl,
+    programs,
+  } = args;
 
-  const requesterLines = [
-    p.requesterName && `<li><b>Name:</b> ${p.requesterName}</li>`,
-    p.requesterEmail && `<li><b>Email:</b> ${p.requesterEmail}</li>`,
-    p.requesterPhone && `<li><b>Phone:</b> ${p.requesterPhone}</li>`,
-  ]
-    .filter(Boolean)
-    .join('');
-
-  const notesBlock = p.notes
-    ? `<p><b>Notes from requester:</b><br/>${p.notes}</p>`
-    : '';
-
-  const sourceLine = p.sourceLabel
-    ? `<p><b>Source:</b> ${p.sourceLabel}</p>`
-    : '';
-
-  const manageLine = p.manageUrl
-    ? `<p><a href="${p.manageUrl}">Open this booking in the admin dashboard</a></p>`
-    : '';
+  const where = fmtLocation(locationType, hallName, address);
 
   return `
-    <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
-    <h2>New booking request</h2>
+  <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height:1.5;">
+    <h2 style="margin-bottom:0.5rem;">New Booking Request</h2>
+    <p style="margin-top:0;">Source: <strong>${sourceLabel}</strong></p>
+    <p><strong>Booking ID:</strong> ${bookingId}</p>
 
-    <p><b>Event:</b> ${p.title}</p>
-    <p><b>When:</b> ${p.date} ${p.startLocal} – ${p.endLocal}</p>
-    <p><b>Location:</b> ${where}</p>
+    <h3>Event Details</h3>
+    <p><strong>Title:</strong> ${title}</p>
+    <p><strong>Date:</strong> ${date}</p>
+    <p><strong>Time:</strong> ${startLocal} – ${endLocal}</p>
+    <p><strong>Location:</strong> ${where}</p>
+    <p><strong>Expected attendees:</strong> ${attendees}</p>
 
-    <h3>Requester details</h3>
+    <h3>Program(s)</h3>
     <ul>
-      ${requesterLines || '<li>(no contact details provided)</li>'}
+      ${fmtPrograms(programs)}
     </ul>
 
-    ${notesBlock}
-    ${sourceLine}
-    ${manageLine}
+    <h3>Requester</h3>
+    <p><strong>Name:</strong> ${requesterName}</p>
+    <p><strong>Phone:</strong> ${requesterPhone}</p>
+    <p><strong>Email:</strong> ${requesterEmail ?? '—'}</p>
 
-    <p>Please review and confirm or follow up with the requester.</p>
+    ${
+      notes
+        ? `<h3>Notes</h3>
+           <p>${notes.replace(/\n/g, '<br/>')}</p>`
+        : ''
+    }
+
+    ${
+      manageUrl
+        ? `<p style="margin-top:1.5rem;">
+             <a href="${manageUrl}" style="display:inline-block;padding:0.5rem 0.9rem;border-radius:4px;background:#0f766e;color:white;text-decoration:none;font-weight:500;">
+               Open in admin
+             </a>
+           </p>`
+        : ''
+    }
+  </div>
   `;
 }
 
-export function renderBookingEmailCustomer(p: {
-  title: string;
-  date: string;
-  startLocal: string;
-  endLocal: string;
-  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
-  hallName?: string | null;
-  address?: string | null;
-}) {
-  const where =
-    p.locationType === 'GURDWARA'
-      ? p.hallName
-        ? `Hall: ${p.hallName}`
-        : 'Gurdwara'
-      : `Address: ${p.address ?? ''}`;
+export function renderBookingEmailCustomer(args: CustomerEmailArgs): string {
+  const {
+    bookingId,
+    title,
+    date,
+    startLocal,
+    endLocal,
+    locationType,
+    hallName,
+    address,
+    attendees,
+    programs,
+  } = args;
 
-  const contactLine = BOOKING_CONTACT_PHONE
-    ? `If you need to update or cancel your request, please contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
-    : `If you need to update or cancel your request, please contact ${BOOKING_CONTACT_NAME}.`;
+  const where = fmtLocation(locationType, hallName, address);
 
   return `
-    <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
-    <h2>Thank you — your booking request has been received</h2>
+  <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height:1.5;">
+    <h2 style="margin-bottom:0.5rem;">Thank you – your booking was received</h2>
+    <p style="margin-top:0;">Your booking ID is <strong>${bookingId}</strong>. Please keep this for reference.</p>
 
-    <p><strong>${p.title}</strong></p>
-    <p>${p.date} ${p.startLocal} – ${p.endLocal}</p>
-    <p>${where}</p>
+    <h3>Event Details</h3>
+    <p><strong>Title:</strong> ${title}</p>
+    <p><strong>Date:</strong> ${date}</p>
+    <p><strong>Time:</strong> ${startLocal} – ${endLocal}</p>
+    <p><strong>Location:</strong> ${where}</p>
+    <p><strong>Expected attendees:</strong> ${attendees}</p>
 
-    <p>We will review your request and confirm the booking with you soon.</p>
-    <p>${contactLine}</p>
+    <h3>Requested program(s)</h3>
+    <ul>
+      ${fmtPrograms(programs)}
+    </ul>
+
+    <p style="margin-top:1.5rem;">
+      The management team will review your request and contact you if any changes are needed.
+    </p>
+  </div>
   `;
 }
 
-export function renderBookingText(p: {
-  title: string;
-  date: string;
-  startLocal: string;
-  endLocal: string;
-  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
-  hallName?: string | null;
-  address?: string | null;
-}) {
-  const where =
-    p.locationType === 'GURDWARA'
-      ? p.hallName
-        ? `Hall: ${p.hallName}`
-        : 'Gurdwara'
-      : `Address: ${p.address ?? ''}`;
+export function renderBookingText(args: BookingTextArgs): string {
+  const {
+    bookingId,
+    title,
+    date,
+    startLocal,
+    endLocal,
+    locationType,
+    hallName,
+    address,
+    programs,
+  } = args;
 
-  const contactLine = BOOKING_CONTACT_PHONE
-    ? `If you need changes, contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
-    : `If you need changes, contact ${BOOKING_CONTACT_NAME}.`;
+  const where = fmtLocation(locationType, hallName, address);
+  const progLine = programs?.length
+    ? `Programs: ${programs.map((p) => p.name).join(', ')}`
+    : '';
 
-  return (
-    `Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.\n` +
-    `Booking request received: ${p.title}\n` +
-    `${p.date} ${p.startLocal}-${p.endLocal}\n` +
-    `${where}\n` +
-    `We will confirm your booking with you soon.\n` +
-    contactLine
-  );
+  return [
+    `Your booking request was received (ID: ${bookingId}).`,
+    `"${title}" on ${date}, ${startLocal}–${endLocal}.`,
+    `Location: ${where}.`,
+    progLine,
+    'We will confirm after review.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function renderBookingEmailCustomerConfirmed(p: {

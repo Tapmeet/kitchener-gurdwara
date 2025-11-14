@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { ApproveButtons } from './parts';
 import ReviewProposed from '@/components/admin/ReviewProposed';
+import BookingTimeEditor from '@/components/admin/BookingTimeEditor';
 import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ export default async function AdminBookingsPage() {
   const session = await auth();
   const role = (session?.user as any)?.role ?? null;
   const isAdmin = role === 'ADMIN';
+
   if (!isAdmin) {
     return (
       <div className='p-6'>
@@ -30,7 +32,6 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
-        // show PROPOSED rows for pending bookings
         assignments: {
           where: { state: 'PROPOSED' },
           orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
@@ -48,7 +49,6 @@ export default async function AdminBookingsPage() {
       include: {
         hall: true,
         items: { include: { programType: true } },
-        // only CONFIRMED rows on confirmed bookings
         assignments: {
           where: { state: 'CONFIRMED' },
           orderBy: [{ start: 'asc' }, { booking: { start: 'asc' } }],
@@ -67,6 +67,7 @@ export default async function AdminBookingsPage() {
     <div className='p-6 space-y-8'>
       <h1 className='text-lg font-semibold'>Admin · Bookings</h1>
 
+      {/* PENDING BOOKINGS */}
       <section>
         <h2 className='font-semibold mb-3'>Pending approvals</h2>
         {pending.length === 0 ? (
@@ -81,6 +82,7 @@ export default async function AdminBookingsPage() {
                     .filter(Boolean) as string[]
                 )
               );
+
               const where =
                 b.locationType === 'GURDWARA'
                   ? b.hall?.name
@@ -115,6 +117,15 @@ export default async function AdminBookingsPage() {
                       </div>
                     ) : null}
 
+                    {/* Adjust time for pending bookings */}
+                    <div className='mt-3'>
+                      <BookingTimeEditor
+                        bookingId={b.id}
+                        initialStart={b.start}
+                        initialEnd={b.end}
+                      />
+                    </div>
+
                     {/* Proposed assignment review UI */}
                     <div className='mt-3'>
                       <ReviewProposed bookingId={b.id} showApprove={false} />
@@ -137,6 +148,7 @@ export default async function AdminBookingsPage() {
         )}
       </section>
 
+      {/* CONFIRMED BOOKINGS */}
       <section>
         <h2 className='font-semibold mb-3'>Recently confirmed (latest 20)</h2>
         {recentConfirmed.length === 0 ? (
@@ -163,20 +175,40 @@ export default async function AdminBookingsPage() {
                     : 'Outside';
 
               return (
-                <div key={b.id} className='p-4'>
-                  <div className='font-medium'>{b.title}</div>
-                  <div className='text-sm text-gray-600'>
-                    {fmt(b.start)} – {fmt(b.end)} · {where}
-                  </div>
-                  <div className='text-xs text-gray-500 mt-1'>
-                    Programs:{' '}
-                    {b.items.map((i) => i.programType.name).join(', ')}
-                  </div>
-                  {uniqueNames.length ? (
-                    <div className='text-xs text-gray-700 mt-1'>
-                      Staff: {uniqueNames.join(', ')}
+                <div
+                  key={b.id}
+                  className='p-4 flex flex-col md:flex-row md:items-start gap-3'
+                >
+                  <div className='flex-1'>
+                    <div className='font-medium'>{b.title}</div>
+                    <div className='text-sm text-gray-600'>
+                      {fmt(b.start)} – {fmt(b.end)} · {where}
                     </div>
-                  ) : null}
+                    <div className='text-xs text-gray-500 mt-1'>
+                      Programs:{' '}
+                      {b.items.map((i) => i.programType.name).join(', ')}
+                    </div>
+                    {uniqueNames.length ? (
+                      <div className='text-xs text-gray-700 mt-1'>
+                        Staff: {uniqueNames.join(', ')}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className='md:w-[240px] flex flex-col gap-2 text-sm'>
+                    <a
+                      href={`/bookings/${b.id}/assignments`}
+                      className='underline hover:no-underline'
+                    >
+                      Manage assignments
+                    </a>
+                    <a
+                      href={`/admin/bookings/${b.id}/edit`}
+                      className='underline hover:no-underline'
+                    >
+                      Edit booking
+                    </a>
+                  </div>
                 </div>
               );
             })}
