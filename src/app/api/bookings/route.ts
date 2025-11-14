@@ -30,6 +30,7 @@ import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 import { pickFirstFittingHall } from '@/lib/halls';
+import { ProgramCategory } from '@prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 
@@ -226,6 +227,7 @@ export async function POST(req: Request) {
         durationMinutes: true,
         // needed for trailing-kirtan server guard
         trailingKirtanMinutes: true,
+        category: true,
       },
     });
 
@@ -254,12 +256,23 @@ export async function POST(req: Request) {
 
     // Headcount required (sum over items)
     const headcountRequired = programs
-      .map((p) =>
-        Math.max(
-          p.peopleRequired ?? 0,
-          (p.minPathers ?? 0) + (p.minKirtanis ?? 0)
-        )
-      )
+      .map((p) => {
+        const minSum = (p.minPathers ?? 0) + (p.minKirtanis ?? 0);
+
+        // Long pure-path programs (Akhand-style): don't treat peopleRequired as
+        // "every hour needs a 5-person team". Concurrency is defined by min pathers.
+        const isLongPathItem =
+          p.category === ProgramCategory.PATH &&
+          (p.durationMinutes ?? 0) >= 36 * 60 && // 36h+ => multi-day
+          (p.minKirtanis ?? 0) === 0;
+
+        if (isLongPathItem) {
+          // At least 1 person, but no massive over-reservation
+          return Math.max(minSum, 1);
+        }
+
+        return Math.max(p.peopleRequired ?? 0, minSum);
+      })
       .reduce((a, b) => a + b, 0);
 
     // How long is this block?
@@ -442,6 +455,8 @@ export async function POST(req: Request) {
                   minPathers: true,
                   minKirtanis: true,
                   peopleRequired: true,
+                  durationMinutes: true,
+                  category: true,
                 },
               },
             },
@@ -471,6 +486,18 @@ export async function POST(req: Request) {
           .map((it: any) => {
             const pt: any = it.programType;
             const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+
+            const isLongPathItem =
+              pt.category === ProgramCategory.PATH &&
+              (pt.durationMinutes ?? 0) >= 36 * 60 &&
+              (pt.minKirtanis ?? 0) === 0;
+
+            if (isLongPathItem) {
+              // For Akhand / long continuous Path, don't reserve a 5-person team for
+              // every single hour over 2 days. Concurrency is driven by min pathers.
+              return Math.max(minSum, 1);
+            }
+
             return Math.max(pt.peopleRequired ?? 0, minSum);
           })
           .reduce((a: number, b: number) => a + b, 0);
