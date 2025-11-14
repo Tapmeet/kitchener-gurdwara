@@ -22,8 +22,8 @@ const twilioClient =
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
 const smsFrom = process.env.TWILIO_SMS_FROM || '';
-const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Tapmeet Singh';
-const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+14379864490';
+const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Manjot Singh';
+const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+15144586202';
 
 function okToSend() {
   if (!ENABLED) return false;
