@@ -141,6 +141,14 @@ type CreatedBooking = {
   notes: string | null;
   attendees: number;
   hall: { name: string } | null;
+  items: {
+    id: string;
+    programType: {
+      name: string;
+      category: ProgramCategory;
+      durationMinutes: number | null;
+    };
+  }[];
 };
 
 export async function POST(req: Request) {
@@ -645,7 +653,20 @@ export async function POST(req: Request) {
             })),
           },
         },
-        include: { hall: { select: { name: true } } },
+        include: {
+          hall: { select: { name: true } },
+          items: {
+            include: {
+              programType: {
+                select: {
+                  name: true,
+                  category: true,
+                  durationMinutes: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       const normalized: CreatedBooking = {
@@ -662,6 +683,14 @@ export async function POST(req: Request) {
         notes: createdRaw.notes,
         attendees: createdRaw.attendees,
         hall: createdRaw.hall ? { name: createdRaw.hall.name } : null,
+        items: createdRaw.items.map((it) => ({
+          id: it.id,
+          programType: {
+            name: it.programType.name,
+            category: it.programType.category,
+            durationMinutes: it.programType.durationMinutes,
+          },
+        })),
       };
       return normalized;
     });
@@ -704,7 +733,14 @@ export async function POST(req: Request) {
       ? `${baseUrl}/admin/bookings/${created.id}`
       : null;
 
+    const emailPrograms = created.items.map((it) => ({
+      name: it.programType.name,
+      category: it.programType.category,
+      durationMinutes: it.programType.durationMinutes,
+    }));
+
     const adminHtml = renderBookingEmailAdmin({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -712,15 +748,18 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      attendees: created.attendees,
       requesterName: created.contactName,
       requesterEmail: created.contactEmail,
       requesterPhone: created.contactPhone,
       notes: created.notes,
       sourceLabel: 'Public booking form',
       manageUrl,
+      programs: emailPrograms,
     });
 
     const customerHtml = renderBookingEmailCustomer({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -728,9 +767,12 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      attendees: created.attendees,
+      programs: emailPrograms,
     });
 
     const smsText = renderBookingText({
+      bookingId: created.id,
       title: created.title,
       date: startDate,
       startLocal: startTime,
@@ -738,8 +780,9 @@ export async function POST(req: Request) {
       locationType: created.locationType,
       hallName: created.hall?.name ?? null,
       address: created.address,
+      programs: emailPrograms,
     });
-    
+
     const adminRecipients = getAdminEmails();
     const customerEmail = created.contactEmail;
 
