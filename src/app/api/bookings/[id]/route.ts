@@ -23,6 +23,7 @@ import { pickFirstFittingHall } from '@/lib/halls';
 import { ProgramCategory } from '@prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+const ENFORCE_WHOLE_JATHA = process.env.ENFORCE_WHOLE_JATHA === '1';
 
 function isBusinessStartHourTZ(d: Date) {
   const hourStr = new Intl.DateTimeFormat('en-CA', {
@@ -258,7 +259,8 @@ export async function PATCH(
     const trailingMax = Math.max(
       ...programs.map((p) => p.trailingKirtanMinutes ?? 0)
     );
-    const needsTrailingJatha = trailingMax > 0;
+
+    const needsTrailingJatha = trailingMax > 0 && ENFORCE_WHOLE_JATHA;
 
     if (needsTrailingJatha) {
       const tStart = new Date(end.getTime() - trailingMax * 60_000);

@@ -336,7 +336,7 @@ async function main() {
   // Akhand Path + Kirtan (48h Path rotations + closing double; last 1h Kirtan)
   await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60, // 48h path + 1h kirtan tail
-    peopleRequired: 5, // not used for FLEX here
+    peopleRequired: 3, // not used for FLEX here
     minPathers: 1,
     minKirtanis: 0,
     trailingKirtanMinutes: 60,
