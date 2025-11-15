@@ -30,11 +30,9 @@ async function upsertProgram(
     requiresHall?: boolean;
     canBeOutsideGurdwara?: boolean;
     compWeight?: number;
-
-    // smart scheduling fields
-    trailingKirtanMinutes?: number; // jatha only at end
-    pathRotationMinutes?: number; // path shifts (e.g. 120)
-    pathClosingDoubleMinutes?: number; // last N minutes need 2 pathis
+    trailingKirtanMinutes?: number;
+    pathRotationMinutes?: number;
+    pathClosingDoubleMinutes?: number;
   }
 ) {
   const {
@@ -51,11 +49,22 @@ async function upsertProgram(
   let minP = Math.max(0, opts.minPathers ?? 0);
   let minK = Math.max(0, opts.minKirtanis ?? 0);
 
-  // hard rule: pure KIRTAN programs need 3 kirtanis and 0 pathers, people ≥ 3
-  if (category === ProgramCategory.KIRTAN) {
+  const isPureKirtan = category === ProgramCategory.KIRTAN;
+  const isFullWindowKirtan = !isPureKirtan && minK > 0;
+
+  // Pure KIRTAN: no Pathi, always at least 3 Kirtanis
+  if (isPureKirtan) {
     minP = 0;
     minK = Math.max(3, minK);
   }
+
+  // Mixed programs that explicitly specify Kirtanis (e.g. Anand Karaj)
+  if (isFullWindowKirtan) {
+    minK = Math.max(3, minK);
+  }
+
+  // NOTE: trailingKirtanMinutes alone does NOT force minKirtanis,
+  // because Path and Kirtan don't overlap in those programs.
 
   const minSum = minP + minK;
   const people = Math.max(opts.peopleRequired ?? 0, minSum);
@@ -141,6 +150,7 @@ async function upsertUser(
     },
   });
 }
+
 async function main() {
   // Admins
   await prisma.user.upsert({
@@ -285,13 +295,13 @@ async function main() {
     compWeight: 4,
   });
 
-  // Alania Da Path + Kirtan (2h total; Path 1h → Kirtan 1h)
+  // Antim Ardas (Alania Da Path) + Kirtan
   await upsertProgram(
     'Antim Ardas (Alania Da Path) + Kirtan',
     ProgramCategory.PATH,
     {
       durationMinutes: 120,
-      peopleRequired: 3,
+      peopleRequired: 3, // max concurrent heads
       minPathers: 1,
       minKirtanis: 0,
       trailingKirtanMinutes: 60,
@@ -336,7 +346,7 @@ async function main() {
   // Akhand Path + Kirtan (48h Path rotations + closing double; last 1h Kirtan)
   await upsertProgram('Akhand Path + Kirtan', ProgramCategory.PATH, {
     durationMinutes: 49 * 60, // 48h path + 1h kirtan tail
-    peopleRequired: 3, // not used for FLEX here
+    peopleRequired: 3, // max concurrent heads at any moment
     minPathers: 1,
     minKirtanis: 0,
     trailingKirtanMinutes: 60,
@@ -350,7 +360,7 @@ async function main() {
   // Akhand Path (48h Path only, rotations + closing double)
   await upsertProgram('Akhand Path', ProgramCategory.PATH, {
     durationMinutes: 48 * 60,
-    peopleRequired: 2, // not used for FLEX here
+    peopleRequired: 2, // rotations + closing double, no Kirtan
     minPathers: 1,
     minKirtanis: 0,
     trailingKirtanMinutes: 0,

@@ -10,6 +10,55 @@ import {
 } from '@/lib/fairness';
 import { JATHA_SIZE } from '@/lib/jatha';
 
+// Best-effort Kirtan picker for ANY program type.
+// - prefers a full jatha (3 Kirtanis from same jatha) if possible
+// - otherwise uses any free Kirtanis across all staff
+// - never pulls PATH-only people into Kirtan
+async function pickKirtanisBestEffort(
+  start: Date,
+  end: Date
+): Promise<{ picks: string[]; shortage: number; jatha: 'A' | 'B' | null }> {
+  let picks: string[] = [];
+  let chosenJatha: 'A' | 'B' | null = null;
+
+  // 1) Try a full jatha for this window (availability-aware)
+  const { jatha, memberIds } = await pickJathaForWindow(start, end);
+
+  if (jatha && memberIds.length >= JATHA_SIZE) {
+    const ordered = await orderByWeightedLoad(memberIds, 'KIRTAN');
+    picks = ordered.slice(0, JATHA_SIZE);
+    chosenJatha = jatha;
+  }
+
+  // 2) If we still don't have 3, top up from any free Kirtanis
+  if (picks.length < JATHA_SIZE) {
+    const busy = await busyStaffIds(start, end); // no double-booking
+
+    const rows = await prisma.staff.findMany({
+      where: {
+        isActive: true,
+        // IMPORTANT: only people who have KIRTAN skill
+        skills: { has: 'KIRTAN' },
+      },
+      select: { id: true },
+    });
+
+    const alreadyPicked = new Set(picks);
+    const freeIds = rows
+      .map((r) => r.id)
+      .filter((id) => !busy.has(id) && !alreadyPicked.has(id));
+
+    if (freeIds.length) {
+      const ordered = await orderByWeightedLoad(freeIds, 'KIRTAN');
+      const needed = Math.min(JATHA_SIZE - picks.length, ordered.length);
+      picks = picks.concat(ordered.slice(0, needed));
+    }
+  }
+
+  const shortage = Math.max(0, JATHA_SIZE - picks.length);
+  return { picks, shortage, jatha: chosenJatha };
+}
+
 export type AssignResult = {
   created: { staffId: string; bookingItemId: string }[];
   shortages: { itemId: string; role: Role | 'FLEX'; needed: number }[];
@@ -244,7 +293,33 @@ export async function autoAssignForBooking(
 
         // 3) Trailing Kirtan (if any) on [pathEnd, end)
         if (tk > 0) {
-          await commit(item.id, orderedJ, pathEnd, end);
+          const {
+            picks,
+            shortage,
+            jatha: tailJatha,
+          } = await pickKirtanisBestEffort(pathEnd, end);
+
+          if (picks.length) {
+            if (shortage > 0) {
+              shortages.push({
+                itemId: item.id,
+                role: 'KIRTAN',
+                needed: shortage,
+              });
+            }
+            // track the jatha we used if any
+            pickedJathaOverall =
+              pickedJathaOverall ?? tailJatha ?? jatha ?? null;
+
+            await commit(item.id, picks, pathEnd, end);
+          } else {
+            // nobody free for that last Kirtan hour
+            shortages.push({
+              itemId: item.id,
+              role: 'KIRTAN',
+              needed: JATHA_SIZE,
+            });
+          }
         }
       } else {
         // ===== FALLBACK CASE: no full jatha free → best-effort staff =====
@@ -315,38 +390,22 @@ export async function autoAssignForBooking(
 
         // 3) Trailing Kirtan [pathEnd, end)
         if (tk > 0) {
-          const ks = pathEnd;
-          const { jatha: tailJatha, memberIds: tailMembers } =
-            await pickJathaForWindow(ks, end);
+          const {
+            picks,
+            shortage,
+            jatha: tailJatha,
+          } = await pickKirtanisBestEffort(pathEnd, end);
 
-          let picksK: string[] = [];
-
-          if (tailJatha && tailMembers.length) {
-            const ordered = await orderByWeightedLoad(tailMembers, 'KIRTAN');
-            picksK = ordered.slice(0, Math.min(JATHA_SIZE, ordered.length));
-            pickedJathaOverall = pickedJathaOverall ?? tailJatha;
-          } else {
-            const busy = await busyStaffIds(ks, end);
-            const rows = await prisma.staff.findMany({
-              where: { isActive: true, skills: { has: 'KIRTAN' } },
-              select: { id: true },
-            });
-            const free = rows.map((r) => r.id).filter((id) => !busy.has(id));
-            if (free.length) {
-              const ordered = await orderByWeightedLoad(free, 'KIRTAN');
-              picksK = ordered.slice(0, Math.min(JATHA_SIZE, ordered.length));
-            }
-          }
-
-          if (picksK.length) {
-            if (picksK.length < JATHA_SIZE) {
+          if (picks.length) {
+            if (shortage > 0) {
               shortages.push({
                 itemId: item.id,
                 role: 'KIRTAN',
-                needed: JATHA_SIZE - picksK.length,
+                needed: shortage,
               });
             }
-            await commit(item.id, picksK, ks, end);
+            pickedJathaOverall = pickedJathaOverall ?? tailJatha ?? null;
+            await commit(item.id, picks, pathEnd, end);
           } else {
             shortages.push({
               itemId: item.id,
@@ -378,45 +437,25 @@ export async function autoAssignForBooking(
     // Reserve set so we don't double-book K & P in the same exact window
     const reservedConcurrent = new Set<string>();
 
-    // --- KIRTAN ---
+    // --- KIRTAN: full-window [start, end] for ANY program type ---
     if (minK > 0 && tk === 0) {
-      // Full-window Kirtan [start, end]
-      const { jatha, memberIds } = await pickJathaForWindow(start, end);
+      const { picks, shortage, jatha } = await pickKirtanisBestEffort(
+        start,
+        end
+      );
 
-      let picksK: string[] = [];
-
-      if (jatha && memberIds.length) {
-        // Ideal: full jatha
-        const jathaOrder = await orderByWeightedLoad(memberIds, 'KIRTAN');
-        picksK = jathaOrder.slice(0, Math.min(JATHA_SIZE, jathaOrder.length));
-        pickedJathaOverall = pickedJathaOverall ?? jatha;
-      } else {
-        // Fallback: any available Kirtanis, even if not a full jatha
-        const busy = await busyStaffIds(start, end);
-        const rows = await prisma.staff.findMany({
-          where: { isActive: true, skills: { has: 'KIRTAN' } },
-          select: { id: true },
-        });
-        const free = rows.map((r) => r.id).filter((id) => !busy.has(id));
-        if (free.length) {
-          const ordered = await orderByWeightedLoad(free, 'KIRTAN');
-          picksK = ordered.slice(0, Math.min(JATHA_SIZE, ordered.length));
-        }
-      }
-
-      if (picksK.length) {
-        if (picksK.length < JATHA_SIZE) {
-          // We got some Kirtanis but not a full jatha
+      if (picks.length) {
+        if (shortage > 0) {
           shortages.push({
             itemId: item.id,
             role: 'KIRTAN',
-            needed: JATHA_SIZE - picksK.length,
+            needed: shortage,
           });
         }
-        picksK.forEach((id) => reservedConcurrent.add(id));
-        await commit(item.id, picksK, start, end);
+        pickedJathaOverall = pickedJathaOverall ?? jatha ?? null;
+        picks.forEach((id) => reservedConcurrent.add(id));
+        await commit(item.id, picks, start, end);
       } else {
-        // No Kirtanis at all
         shortages.push({
           itemId: item.id,
           role: 'KIRTAN',
@@ -425,39 +464,21 @@ export async function autoAssignForBooking(
       }
     }
 
+    // --- KIRTAN: trailing-only [kirtanStart, end] for ANY program type ---
     if (tk > 0) {
-      // Kirtan only at the tail [kirtanStart, end]
       const ks = kirtanStart!;
-      const { jatha, memberIds } = await pickJathaForWindow(ks, end);
+      const { picks, shortage, jatha } = await pickKirtanisBestEffort(ks, end);
 
-      let picksK: string[] = [];
-
-      if (jatha && memberIds.length) {
-        const order = await orderByWeightedLoad(memberIds, 'KIRTAN');
-        picksK = order.slice(0, Math.min(JATHA_SIZE, order.length));
-        pickedJathaOverall = pickedJathaOverall ?? jatha;
-      } else {
-        const busy = await busyStaffIds(ks, end);
-        const rows = await prisma.staff.findMany({
-          where: { isActive: true, skills: { has: 'KIRTAN' } },
-          select: { id: true },
-        });
-        const free = rows.map((r) => r.id).filter((id) => !busy.has(id));
-        if (free.length) {
-          const ordered = await orderByWeightedLoad(free, 'KIRTAN');
-          picksK = ordered.slice(0, Math.min(JATHA_SIZE, ordered.length));
-        }
-      }
-
-      if (picksK.length) {
-        if (picksK.length < JATHA_SIZE) {
+      if (picks.length) {
+        if (shortage > 0) {
           shortages.push({
             itemId: item.id,
             role: 'KIRTAN',
-            needed: JATHA_SIZE - picksK.length,
+            needed: shortage,
           });
         }
-        await commit(item.id, picksK, ks, end);
+        pickedJathaOverall = pickedJathaOverall ?? jatha ?? null;
+        await commit(item.id, picks, ks, end);
       } else {
         shortages.push({
           itemId: item.id,
