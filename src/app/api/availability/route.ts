@@ -18,6 +18,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 
 // 15 min buffer (outside gurdwara only)
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
+const ENFORCE_WHOLE_JATHA = process.env.ENFORCE_WHOLE_JATHA === '1';
 
 /** Convert "YYYY-MM-DD @ hour:00 in TZ" to the correct UTC Date, robust to DST. */
 function offsetStrToMinutes(off: string): number {
@@ -418,7 +419,8 @@ export async function GET(req: Request) {
       }
 
       // Whole-jatha guard (final, single place)
-      if (ok) {
+      // Now controlled by ENFORCE_WHOLE_JATHA so it becomes a *soft* preference.
+      if (ok && ENFORCE_WHOLE_JATHA) {
         if (jathaAllThroughCount > 0) {
           // Need full jatha available for ALL hours in the span
           for (const hh of spanHours) {
