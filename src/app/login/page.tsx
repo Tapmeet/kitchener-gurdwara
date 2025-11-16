@@ -3,6 +3,7 @@
 import { FormEvent, useState, useEffect, useMemo } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 
 /** Strictly allow same-origin relative paths to avoid open redirects. */
 function sanitizeCallbackUrl(raw: string | null): string {
@@ -82,7 +83,7 @@ export default function LoginPage() {
     () => sanitizeCallbackUrl(params.get('callbackUrl')),
     [params]
   );
-  
+
   const urlError = params.get('error');
 
   const [email, setEmail] = useState('');
@@ -211,6 +212,20 @@ export default function LoginPage() {
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+
+        <p className='mt-4 text-sm text-gray-600 text-center'>
+          Don&apos;t have an account yet?{' '}
+          <Link
+            href={`/signup${
+              callbackUrl && callbackUrl !== '/'
+                ? `?callbackUrl=${encodeURIComponent(callbackUrl)}`
+                : ''
+            }`}
+            className='font-medium text-blue-900 hover:underline'
+          >
+            Sign up
+          </Link>
+        </p>
 
         {/* Separator styled like the screenshot */}
         <div className='flex items-center gap-3'>
