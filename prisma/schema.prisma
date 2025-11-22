@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
+  engineType = "client"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL") // use POOLER URL (pgbouncer) at runtime
-  directUrl = env("DIRECT_URL") // use DIRECT (non-pooler) for migrations
+  provider = "postgresql"
 }
 
 enum UserRole {
@@ -43,6 +43,14 @@ enum BookingStatus {
   EXPIRED
 }
 
+enum SpaceRecurrence {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 enum AssignmentState {
   PROPOSED
   CONFIRMED
@@ -65,8 +73,9 @@ model User {
   sessions Session[]
 
   // App relations
-  createdBookings  Booking[] @relation("CreatedBy")
-  approvedBookings Booking[] @relation("ApprovedBy")
+  createdBookings  Booking[]      @relation("CreatedBy")
+  approvedBookings Booking[]      @relation("ApprovedBy")
+  spaceBookings    SpaceBooking[]
 }
 
 model Hall {
@@ -77,7 +86,8 @@ model Hall {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bookings Booking[]
+  bookings      Booking[]
+  spaceBookings SpaceBooking[]
 }
 
 model ProgramType {
@@ -143,6 +153,46 @@ model Booking {
   @@index([approvedById])
   @@index([contactEmail])
   @@index([status, createdAt])
+}
+
+model SpaceBooking {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+
+  // Where this “space booking” lives
+  locationType LocationType
+
+  // Optional specific hall – only used when blocksHall = true
+  hallId String?
+  hall   Hall?   @relation(fields: [hallId], references: [id])
+
+  // If false, this is an informational event and does NOT reserve a hall
+  blocksHall Boolean @default(true)
+
+  // If true, the public calendar will show the real title
+  isPublicTitle Boolean @default(true)
+
+  // Base start/end of the slot (first occurrence)
+  start DateTime
+  end   DateTime
+
+  // Simple recurrence rule
+  recurrence SpaceRecurrence @default(ONCE)
+  interval   Int             @default(1) // every N days/weeks/months/years
+  until      DateTime? // optional “repeat until” date
+
+  // Lifecycle
+  isActive    Boolean @default(true)
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([start, end])
+  @@index([recurrence])
+  @@index([isActive])
 }
 
 model BookingItem {

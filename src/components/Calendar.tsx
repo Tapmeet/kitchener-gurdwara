@@ -49,6 +49,28 @@ export default function CalendarView() {
   }, [isMobile]);
 
   const onEventClick = useCallback(async (arg: any) => {
+    const kind = arg.event.extendedProps?.kind;
+
+    // Space booking: use event data directly, no extra fetch
+    if (kind === 'space') {
+      const detail = {
+        kind: 'space',
+        title: arg.event.title,
+        description: arg.event.extendedProps?.description ?? null,
+        locationType: arg.event.extendedProps?.locationType ?? 'GURDWARA',
+        hallName: arg.event.extendedProps?.hallName ?? null,
+        blocksHall: !!arg.event.extendedProps?.blocksHall,
+        recurrence: arg.event.extendedProps?.recurrence ?? 'ONCE',
+        interval: arg.event.extendedProps?.interval ?? 1,
+        start: arg.event.start?.toISOString() ?? null,
+        end: arg.event.end?.toISOString() ?? null,
+      };
+      setDetail(detail);
+      setDetailOpen(true);
+      return;
+    }
+
+    // Normal booking (existing behaviour)
     try {
       const res = await fetch(`/api/bookings/${arg.event.id}`);
       if (!res.ok) return;
@@ -69,6 +91,26 @@ export default function CalendarView() {
       });
     } catch {
       return iso;
+    }
+  };
+
+  const describeSpaceRecurrence = (detail: any) => {
+    const freq = detail.recurrence ?? 'ONCE';
+    const interval = detail.interval ?? 1;
+    const every = interval === 1 ? 'Every' : `Every ${interval}`;
+    switch (freq) {
+      case 'ONCE':
+        return 'One-time';
+      case 'DAILY':
+        return `${every} day`;
+      case 'WEEKLY':
+        return `${every} week`;
+      case 'MONTHLY':
+        return `${every} month`;
+      case 'YEARLY':
+        return `${every} year`;
+      default:
+        return 'One-time';
     }
   };
 
@@ -254,6 +296,9 @@ export default function CalendarView() {
         )}
 
         {/* Calendar */}
+        <p className='mt-2 mb-1 text-xs text-gray-500'>
+          Tip: Click any blue block to see full details.
+        </p>
         <div className='fancy-fc'>
           <FullCalendar
             ref={calRef as any}
@@ -275,6 +320,13 @@ export default function CalendarView() {
             allDaySlot
             dayMaxEvents
             dayMaxEventRows
+            eventDidMount={(info) => {
+              // show hand cursor and native tooltip
+              info.el.classList.add('cursor-pointer');
+              if (!info.el.getAttribute('title')) {
+                info.el.setAttribute('title', 'Click to see more details');
+              }
+            }}
             eventClick={onEventClick}
             slotLabelFormat={{
               hour: '2-digit',
@@ -349,7 +401,7 @@ export default function CalendarView() {
                     1,
                     Math.round((end!.getTime() - start.getTime()) / 86400000)
                   );
-                  timeLabel = `${fmtMD(start)} ${fmtHM(start)} → ${fmtMD(end!)} ${fmtHM(end!)} (${days} day${days > 1 ? 's' : ''})`;
+                  timeLabel = `(${days} day${days > 1 ? 's' : ''})`;
                 } else {
                   // Middle or ending segments: no time text; keep title only
                   timeLabel = '';
@@ -371,7 +423,6 @@ export default function CalendarView() {
               const html = `
     <div class="fcgb-event">
       <div class="fcgb-line">
-        ${timeLabel ? `<span class="fcgb-time">${timeLabel}</span>` : ''}
         <span class="fcgb-title">${arg.event.title}</span>
       </div>
       ${
@@ -397,9 +448,14 @@ export default function CalendarView() {
             --fc-button-text-color: rgb(17, 24, 39);
             --fc-today-bg-color: rgba(59, 130, 246, 0.08);
             --fc-now-indicator-color: #ef4444;
-            --fc-event-text-color: rgb(17, 24, 39);
+            --fc-event-text-color: rgb(17, 24, 39); /* default dark text */
             --fc-event-bg-color: #5a6eab;
             --fc-event-border-color: #596eab;
+          }
+
+          /* Only blue events (bookings + space bookings) get white text */
+          .fancy-fc .fc-event.event-blue {
+            color: #ffffff !important;
           }
 
           /* Grid views */
@@ -446,6 +502,7 @@ export default function CalendarView() {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            flex-direction: column;
           }
           .fancy-fc .fcgb-time {
             font-variant-numeric: tabular-nums;
@@ -567,84 +624,146 @@ export default function CalendarView() {
               </button>
             </div>
             <div className='p-5 space-y-3 text-sm'>
-              <div className='grid grid-cols-2 gap-3'>
-                <div>
-                  <div className='text-gray-500'>Title</div>
-                  <div className='font-medium'>{detail.title}</div>
-                </div>
-                <div>
-                  <div className='text-gray-500'>Location</div>
-                  <div className='font-medium'>
-                    {detail.locationType === 'GURDWARA'
-                      ? detail.hall?.name || 'Gurdwara'
-                      : detail.address || '—'}
-                  </div>
-                </div>
-                <div>
-                  <div className='text-gray-500'>Start</div>
-                  <div className='font-medium'>{formatDT(detail.start)}</div>
-                </div>
-                <div>
-                  <div className='text-gray-500'>End</div>
-                  <div className='font-medium'>{formatDT(detail.end)}</div>
-                </div>
-                <div>
-                  <div className='text-gray-500'>Attendees</div>
-                  <div className='font-medium'>{detail.attendees ?? '—'}</div>
-                </div>
-                <div>
-                  <div className='text-gray-500'>Contact</div>
-                  <div className='font-medium'>
-                    {detail.contactName} ({detail.contactPhone})
-                    {detail.contactEmail ? ` · ${detail.contactEmail}` : ''}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className='text-gray-500 mb-1'>Programs</div>
-                {Array.isArray(detail.programs) && detail.programs.length ? (
-                  <div className='flex flex-wrap gap-2'>
-                    {detail.programs.map((p: any) => (
-                      <span
-                        key={p.id}
-                        className='inline-block rounded-full border px-3 py-1 text-xs'
-                      >
-                        {p.name}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div>—</div>
-                )}
-              </div>
-
-              <div>
-                <div className='text-gray-500 mb-1'>Assignments</div>
-                {Array.isArray(detail.assignments) &&
-                detail.assignments.length ? (
-                  <div className='space-y-1'>
-                    {detail.assignments.map((a: any) => (
-                      <div key={a.id} className='flex items-center gap-2'>
-                        <span className='rounded bg-black/5 px-2 py-0.5 text-xs'>
-                          {a.programType?.name ?? '—'}
-                        </span>
-                        <span className='text-sm'>
-                          {a.staff?.name ?? 'Unassigned'}
-                        </span>
+              {detail.kind === 'space' ? (
+                <>
+                  <div className='grid grid-cols-2 gap-3'>
+                    <div>
+                      <div className='text-gray-500'>Title</div>
+                      <div className='font-medium'>{detail.title}</div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Location</div>
+                      <div className='font-medium'>
+                        {detail.hallName
+                          ? detail.hallName
+                          : detail.locationType === 'GURDWARA'
+                            ? 'Gurdwara'
+                            : '—'}
                       </div>
-                    ))}
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Start</div>
+                      <div className='font-medium'>
+                        {detail.start ? formatDT(detail.start) : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>End</div>
+                      <div className='font-medium'>
+                        {detail.end ? formatDT(detail.end) : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Recurrence</div>
+                      <div className='font-medium'>
+                        {describeSpaceRecurrence(detail)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Reserves hall?</div>
+                      <div className='font-medium'>
+                        {detail.blocksHall ? 'Yes' : 'No'}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div>—</div>
-                )}
-              </div>
 
-              {detail.notes && (
-                <div>
-                  <div className='text-gray-500 mb-1'>Notes</div>
-                  <div className='whitespace-pre-wrap'>{detail.notes}</div>
-                </div>
+                  {detail.description && (
+                    <div>
+                      <div className='text-gray-500 mb-1'>Description</div>
+                      <div className='whitespace-pre-wrap'>
+                        {detail.description}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* existing booking detail layout */}
+                  <div className='grid grid-cols-2 gap-3'>
+                    <div>
+                      <div className='text-gray-500'>Title</div>
+                      <div className='font-medium'>{detail.title}</div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Location</div>
+                      <div className='font-medium'>
+                        {detail.locationType === 'GURDWARA'
+                          ? detail.hall?.name || 'Gurdwara'
+                          : detail.address || '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Start</div>
+                      <div className='font-medium'>
+                        {formatDT(detail.start)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>End</div>
+                      <div className='font-medium'>{formatDT(detail.end)}</div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Attendees</div>
+                      <div className='font-medium'>
+                        {detail.attendees ?? '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className='text-gray-500'>Contact</div>
+                      <div className='font-medium'>
+                        {detail.contactName} ({detail.contactPhone})
+                        {detail.contactEmail ? ` · ${detail.contactEmail}` : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className='text-gray-500 mb-1'>Programs</div>
+                    {Array.isArray(detail.programs) &&
+                    detail.programs.length ? (
+                      <div className='flex flex-wrap gap-2'>
+                        {detail.programs.map((p: any) => (
+                          <span
+                            key={p.id}
+                            className='rounded bg-black/5 px-2 py-0.5 text-xs'
+                          >
+                            {p.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>—</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className='text-gray-500 mb-1'>Assignments</div>
+                    {Array.isArray(detail.assignments) &&
+                    detail.assignments.length ? (
+                      <div className='space-y-1'>
+                        {detail.assignments.map((a: any) => (
+                          <div key={a.id} className='flex items-center gap-2'>
+                            <span className='rounded bg-black/5 px-2 py-0.5 text-xs'>
+                              {a.programType?.name ?? '—'}
+                            </span>
+                            <span className='text-sm'>
+                              {a.staff?.name ?? 'Unassigned'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>—</div>
+                    )}
+                  </div>
+
+                  {detail.notes && (
+                    <div>
+                      <div className='text-gray-500 mb-1'>Notes</div>
+                      <div className='whitespace-pre-wrap'>{detail.notes}</div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
