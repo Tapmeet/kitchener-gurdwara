@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/generated/prisma/client';
 
 function fmt(d: Date | string | number, pattern = DATE_TIME_FMT) {
   try {

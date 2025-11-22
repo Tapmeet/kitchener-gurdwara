@@ -1,4 +1,4 @@
-import { LocationType } from '@prisma/client';
+import { LocationType } from '@/generated/prisma/client';
 
 export const SMALL_HALL_CAP = 125; // <= this => Small Hall / Hall 2
 export const MAIN_HALL_CAP = 325; // > 125 => Main Hall

@@ -1,15 +1,22 @@
 // scripts/clear-bookings.ts
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import 'dotenv/config';
+import { PrismaClient } from '@/generated/prisma/client';
+import { PrismaNeon } from '@prisma/adapter-neon';
+
+const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DIRECT_URL or DATABASE_URL must be set in env');
+}
+
+const adapter = new PrismaNeon({ connectionString });
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  // Delete children first to satisfy FKs. Adjust model names if yours differ.
-  // If you don't have some of these models, just delete that line.
-
   await prisma.$transaction([
-    // prisma.assignment.deleteMany({}),      // e.g. staff assignments linked to a booking
-    // prisma.bookingItem.deleteMany({}),     // e.g. programs/items linked to a booking
-    prisma.booking.deleteMany({}), // the bookings themselves
+    // prisma.bookingAssignment.deleteMany({}), // if you want to clear assignments too
+    // prisma.bookingItem.deleteMany({}),
+    prisma.booking.deleteMany({}),
   ]);
 
   console.log('✅ All bookings cleared');
@@ -24,8 +31,8 @@ main()
     await prisma.$disconnect();
   });
 
-//Dev
-//npx dotenv -e .env.local -- tsx scripts/clear-bookings.ts
+// Dev:
+// npx dotenv -e .env.local -- tsx scripts/clear-bookings.ts
 
-//Preview
-//npx dotenv -e .env.preview -- npx tsx scripts/clear-bookings.ts
+// Preview:
+// npx dotenv -e .env.preview -- tsx scripts/clear-bookings.ts

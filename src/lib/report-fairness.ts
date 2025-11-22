@@ -1,11 +1,10 @@
-
 // src/lib/report-fairness.ts
-import { prisma } from "@/lib/db";
-import { startOfWeek, endOfWeek, subWeeks, isAfter, isBefore } from "date-fns";
-import type { ProgramCategory, StaffSkill } from "@prisma/client";
+import { prisma } from '@/lib/db';
+import { startOfWeek, endOfWeek, subWeeks, isAfter, isBefore } from 'date-fns';
+import type { ProgramCategory, StaffSkill } from '@/generated/prisma/client';
 
-export type Role = "PATH" | "KIRTAN";
-export type Jatha = "A" | "B";
+export type Role = 'PATH' | 'KIRTAN';
+export type Jatha = 'A' | 'B';
 
 export type ProgramBreakdown = {
   programId: string;
@@ -32,42 +31,71 @@ export type StaffFairnessRow = {
 };
 
 export type ReportFilters = {
-  windowWeeks?: number;         // default 8
-  role?: Role | "";             // filter to PATH or KIRTAN; empty for all
-  jatha?: Jatha | "";           // filter by jatha
-  q?: string;                   // name search (case-insensitive)
+  windowWeeks?: number; // default 8
+  role?: Role | ''; // filter to PATH or KIRTAN; empty for all
+  jatha?: Jatha | ''; // filter by jatha
+  q?: string; // name search (case-insensitive)
 };
 
-export async function buildFairnessReport(filters: ReportFilters = {}): Promise<{ rows: StaffFairnessRow[], windowStart: Date, windowEnd: Date }> {
-  const windowWeeks = Number.isFinite(filters.windowWeeks) && (filters.windowWeeks as number) > 0 ? (filters.windowWeeks as number) : 8;
+export async function buildFairnessReport(
+  filters: ReportFilters = {}
+): Promise<{ rows: StaffFairnessRow[]; windowStart: Date; windowEnd: Date }> {
+  const windowWeeks =
+    Number.isFinite(filters.windowWeeks) && (filters.windowWeeks as number) > 0
+      ? (filters.windowWeeks as number)
+      : 8;
   const windowEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
-  const windowStart = subWeeks(startOfWeek(windowEnd, { weekStartsOn: 1 }), windowWeeks);
+  const windowStart = subWeeks(
+    startOfWeek(windowEnd, { weekStartsOn: 1 }),
+    windowWeeks
+  );
 
   // Load active staff with optional filters
   const staff = await prisma.staff.findMany({
     where: {
       isActive: true,
       ...(filters.jatha ? { jatha: filters.jatha as Jatha } : {}),
-      ...(filters.q ? { name: { contains: filters.q, mode: "insensitive" } } : {}),
+      ...(filters.q
+        ? { name: { contains: filters.q, mode: 'insensitive' } }
+        : {}),
     },
-    select: { id: true, name: true, jatha: true, email: true, phone: true, skills: true },
-    orderBy: [{ jatha: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      jatha: true,
+      email: true,
+      phone: true,
+      skills: true,
+    },
+    orderBy: [{ jatha: 'asc' }, { name: 'asc' }],
   });
-  const staffIds = staff.map(s => s.id);
+  const staffIds = staff.map((s) => s.id);
   if (!staffIds.length) return { rows: [], windowStart, windowEnd };
 
   // Pull assignments for those staff (all-time), including program info and booking start for time-window logic
   const asgn = await prisma.bookingAssignment.findMany({
     where: {
       staffId: { in: staffIds },
-      ...(filters.role ? { bookingItem: { programType: { category: filters.role as ProgramCategory } } } : {}),
+      ...(filters.role
+        ? {
+            bookingItem: {
+              programType: { category: filters.role as ProgramCategory },
+            },
+          }
+        : {}),
     },
     select: {
       staffId: true,
       booking: { select: { start: true } },
-      bookingItem: { select: { programType: { select: { id: true, name: true, category: true, compWeight: true } } } },
+      bookingItem: {
+        select: {
+          programType: {
+            select: { id: true, name: true, category: true, compWeight: true },
+          },
+        },
+      },
     },
-    orderBy: [{ booking: { start: "asc" } }],
+    orderBy: [{ booking: { start: 'asc' } }],
   });
 
   // Pre-index staff
@@ -76,7 +104,7 @@ export async function buildFairnessReport(filters: ReportFilters = {}): Promise<
     byStaff[s.id] = {
       staffId: s.id,
       name: s.name,
-      jatha: (s.jatha as Jatha | null),
+      jatha: s.jatha as Jatha | null,
       email: s.email ?? null,
       phone: s.phone ?? null,
       skills: s.skills as StaffSkill[],
@@ -103,7 +131,9 @@ export async function buildFairnessReport(filters: ReportFilters = {}): Promise<
     }
 
     s.creditsTotal += weight;
-    const inWindow = when ? (isAfter(when, windowStart) && isBefore(when, windowEnd)) : false;
+    const inWindow = when
+      ? isAfter(when, windowStart) && isBefore(when, windowEnd)
+      : false;
     if (inWindow) s.creditsWindow += weight;
 
     if (!progMap[s.staffId]) progMap[s.staffId] = {};
@@ -132,12 +162,18 @@ export async function buildFairnessReport(filters: ReportFilters = {}): Promise<
     const row = byStaff[s.id];
     const programs = progMap[s.id] ? Object.values(progMap[s.id]) : [];
     // Sort programs by creditsWindow, then total
-    programs.sort((a, b) => (b.creditsWindow - a.creditsWindow) || (b.creditsTotal - a.creditsTotal));
+    programs.sort(
+      (a, b) =>
+        b.creditsWindow - a.creditsWindow || b.creditsTotal - a.creditsTotal
+    );
     row.programs = programs;
   }
 
   // Sort staff by creditsWindow desc (heaviest first) so the lightest appear at bottom for fairness
-  const rows = Object.values(byStaff).sort((a, b) => (b.creditsWindow - a.creditsWindow) || (b.creditsTotal - a.creditsTotal));
+  const rows = Object.values(byStaff).sort(
+    (a, b) =>
+      b.creditsWindow - a.creditsWindow || b.creditsTotal - a.creditsTotal
+  );
 
   return { rows, windowStart, windowEnd };
 }
