@@ -7,7 +7,7 @@ import {
   StaffSkill,
   Jatha,
   UserRole,
-} from '@prisma/client';
+} from '@/generated/prisma/client';;
 
 const prisma = new PrismaClient();
 
