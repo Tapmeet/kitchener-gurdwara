@@ -1,6 +1,6 @@
 // src/lib/jatha.ts
 import { prisma } from '@/lib/db';
-import { StaffSkill } from '@/generated/prisma/client';;
+import { StaffSkill } from '@/generated/prisma/client';
 
 export const JATHA_SIZE = 3;
 

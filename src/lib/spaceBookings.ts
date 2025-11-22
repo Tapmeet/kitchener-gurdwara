@@ -1,6 +1,6 @@
 // src/lib/spaceBookings.ts
 import { prisma } from '@/lib/db';
-import { SpaceRecurrence, LocationType } from '@/generated/prisma/client';;
+import { SpaceRecurrence, LocationType } from '@/generated/prisma/client';
 import { addDays, addWeeks, addMonths, addYears } from 'date-fns';
 
 export type SpaceBookingEvent = {

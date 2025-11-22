@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { SpaceRecurrence } from '@/generated/prisma/client';;
+import { SpaceRecurrence } from '@/generated/prisma/client';
 import { spaceBookingOverlaps } from '@/lib/spaceBookings';
 
 const HALL_PATTERNS = {

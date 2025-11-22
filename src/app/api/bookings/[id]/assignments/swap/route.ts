@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
 import { prisma } from '@/lib/db';
-import { StaffSkill } from '@/generated/prisma/client';;
+import { StaffSkill } from '@/generated/prisma/client';
 
 const ALLOWED = new Set(['ADMIN']);
 

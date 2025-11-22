@@ -1,4 +1,4 @@
-import { PrismaClient, StaffSkill } from '@/generated/prisma/client';;
+import { PrismaClient, StaffSkill } from '@/generated/prisma/client';
 
 export type StaffRequirement = {
   minPathers: number;

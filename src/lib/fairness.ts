@@ -1,7 +1,7 @@
 // src/lib/fairness.ts
 import { prisma } from '@/lib/db';
 import { startOfWeek, endOfWeek, subWeeks, startOfDay } from 'date-fns';
-import type { ProgramCategory } from '@/generated/prisma/client';;
+import type { ProgramCategory } from '@/generated/prisma/client';
 
 export type Role = 'PATH' | 'KIRTAN';
 export type Jatha = 'A' | 'B';
