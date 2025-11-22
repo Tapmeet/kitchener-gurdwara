@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
+import { listSpaceBookingOccurrences } from '@/lib/spaceBookings';
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
@@ -12,56 +13,90 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const fromStr = searchParams.get('from');
   const toStr = searchParams.get('to');
-  const from = fromStr ? new Date(fromStr) : undefined;
-  const to = toStr ? new Date(toStr) : undefined;
 
-  // Build Prisma where with overlap
-  const where: any = {
-    // Hide cancelled/expired for everyone
-    status: isAdmin ? { in: ['PENDING', 'CONFIRMED'] } : 'CONFIRMED',
-  };
-  if (to) where.start = { lt: to }; // start < to
-  if (from) where.end = { gt: from }; // end > from
+  const now = new Date();
 
+  const from = fromStr
+    ? new Date(fromStr)
+    : new Date(now.getTime() - 30 * 86400000);
+  const to = toStr ? new Date(toStr) : new Date(now.getTime() + 30 * 86400000);
+
+  // 1) Normal bookings (pending + confirmed)
   const bookings = await prisma.booking.findMany({
-    where,
-    include: {
-      hall: true,
-      items: { include: { programType: true } },
+    where: {
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      start: { lt: to },
+      end: { gt: from },
     },
-    orderBy: { start: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      start: true,
+      end: true,
+      locationType: true,
+      hall: { select: { id: true, name: true } },
+      status: true,
+    },
   });
 
-  // Map to events
-  const adminEvents = bookings.map((b) => {
-    const programs = b.items
-      .map((i) => i.programType?.name)
-      .filter((x): x is string => Boolean(x));
+  const bookingEvents = bookings.map((b) => ({
+    id: b.id,
+    title: b.title,
+    start: b.start,
+    end: b.end,
+    classNames: [
+      'event-blue',
+      'booking',
+      b.status === 'CONFIRMED' ? 'booking-confirmed' : 'booking-pending',
+    ],
+    extendedProps: {
+      kind: 'booking',
+      bookingId: b.id,
+      locationType: b.locationType,
+      hallName: b.hall?.name ?? null,
+      status: b.status,
+    },
+  }));
 
+  // 2) Recurring/admin “space bookings”
+  const spaceEvents = await listSpaceBookingOccurrences(from, to);
+
+  const adminEvents = [...bookingEvents, ...spaceEvents];
+
+  if (isAdmin) {
+    return NextResponse.json(adminEvents);
+  }
+
+  // Public view:
+  // - Normal bookings: generic "Booked"
+  // - Space bookings with isPublicTitle=true: show real title
+  const publicEvents = adminEvents.map((e: any) => {
+    if (e.extendedProps?.kind === 'space') {
+      if (e.extendedProps.isPublicTitle) {
+        return {
+          ...e,
+          classNames: [...(e.classNames ?? []), 'public-space-booking'],
+        };
+      }
+      // masked space booking (rare case)
+      return {
+        id: e.id,
+        title: 'Booked',
+        start: e.start,
+        end: e.end,
+        classNames: [...(e.classNames ?? []), 'public-booked'],
+      };
+    }
+
+    // Normal booking: always generic for public
     return {
-      id: b.id,
-      title: b.title,
-      start: b.start.toISOString(),
-      end: b.end.toISOString(),
-      extendedProps: {
-        locationType: b.locationType,
-        hallId: b.hallId,
-        programs,
-        status: b.status,
-      },
+      id: e.id,
+      title: 'Booked',
+      start: e.start,
+      end: e.end,
+      classNames: [...(e.classNames ?? []), 'public-booked'],
     };
   });
-
-  if (isAdmin) return NextResponse.json(adminEvents);
-
-  // Public view: generic title, no details
-  const publicEvents = adminEvents.map((e) => ({
-    id: e.id,
-    title: 'Booked',
-    start: e.start,
-    end: e.end,
-    classNames: ['public-booked'],
-  }));
 
   return NextResponse.json(publicEvents);
 }
