@@ -10,6 +10,7 @@ type BookingEditFormProps = {
     start: string; // ISO
     end: string; // ISO
     locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+    hallId: string | null;
     hallName: string | null;
     address: string | null;
     attendees: number;
@@ -19,8 +20,9 @@ type BookingEditFormProps = {
     notes: string | null;
     status: string;
     programNames: string[];
-    blockHours: number; // ⬅️ derived from program type durations
+    blockHours: number;
   };
+  halls: { id: string; name: string }[];
 };
 
 type HourOption = { value: string; label: string };
@@ -52,7 +54,10 @@ function combineDateAndTime(date: string, time: string): string {
   return new Date(`${date}T${time}:00`).toISOString();
 }
 
-const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
+const BookingEditForm: React.FC<BookingEditFormProps> = ({
+  booking,
+  halls,
+}) => {
   const router = useRouter();
 
   const initial = useMemo(() => {
@@ -76,6 +81,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
   const [contactPhone, setContactPhone] = useState(booking.contactPhone);
   const [contactEmail, setContactEmail] = useState(booking.contactEmail ?? '');
   const [notes, setNotes] = useState(booking.notes ?? '');
+  const [hallId, setHallId] = useState<string>(booking.hallId ?? '');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +132,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
           contactPhone: contactPhone.trim(),
           contactEmail: contactEmail.trim() || null,
           notes,
+          hallId: booking.locationType === 'GURDWARA' ? hallId || null : null,
         }),
       });
 
@@ -233,6 +240,44 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
           </p>
         </div>
 
+        {/* Location / hall (admin-editable) */}
+        <div>
+          <div className='text-sm font-medium text-gray-700 mb-1'>
+            Location / hall
+          </div>
+
+          {booking.locationType === 'GURDWARA' ? (
+            <div className='space-y-1 text-sm'>
+              <label className='block text-xs text-gray-500 mb-1'>
+                Hall at the Gurdwara
+              </label>
+              <select
+                className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
+                value={hallId}
+                onChange={(e) => setHallId(e.target.value)}
+              >
+                <option value=''>Auto / unspecified hall</option>
+                {halls.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+              <p className='mt-1 text-xs text-gray-500'>
+                Changing the hall does not re-run auto-picking; make sure the
+                new hall is free and suitable.
+              </p>
+            </div>
+          ) : (
+            <div className='text-xs text-gray-500'>
+              Outside booking – address:{' '}
+              <span className='font-medium'>
+                {booking.address || 'Not specified'}
+              </span>
+            </div>
+          )}
+        </div>
+
         {/* Attendees */}
         <div>
           <label className='block text-sm font-medium text-gray-700'>
@@ -297,12 +342,6 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
 
         {/* Read-only info */}
         <div className='border-t pt-3 mt-2 text-xs text-gray-500 space-y-1'>
-          <div>
-            <b>Location:</b>{' '}
-            {booking.locationType === 'GURDWARA'
-              ? booking.hallName || 'Gurdwara'
-              : booking.address || 'Outside'}
-          </div>
           <div>
             <b>Programs:</b> {booking.programNames.join(', ')}
           </div>

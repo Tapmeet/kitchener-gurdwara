@@ -20,22 +20,37 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
     redirect(`/login?callbackUrl=/admin/bookings/${id}/edit`);
   }
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
-    include: {
-      hall: { select: { name: true } },
-      items: {
-        include: {
-          programType: {
-            select: {
-              name: true,
-              durationMinutes: true,
+  const [booking, halls] = await Promise.all([
+    prisma.booking.findUnique({
+      where: { id },
+      include: {
+        hall: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        items: {
+          include: {
+            programType: {
+              select: {
+                name: true,
+                durationMinutes: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.hall.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+      },
+    }),
+  ]);
 
   if (!booking) {
     notFound();
@@ -49,7 +64,6 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
         )
       : 60;
 
-  // Same semantics as create route: ceil to full hours, at least 1
   const blockHours = Math.max(1, Math.ceil(maxDurationMinutes / 60));
 
   return (
@@ -64,6 +78,7 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
           start: booking.start.toISOString(),
           end: booking.end.toISOString(),
           locationType: booking.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA',
+          hallId: booking.hallId,
           hallName: booking.hall?.name ?? null,
           address: booking.address,
           attendees: booking.attendees,
@@ -75,6 +90,7 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
           programNames: booking.items.map((i) => i.programType.name),
           blockHours,
         }}
+        halls={halls}
       />
     </div>
   );

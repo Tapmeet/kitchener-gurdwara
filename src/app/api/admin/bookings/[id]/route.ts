@@ -74,6 +74,7 @@ export async function PATCH(
       contactPhone,
       contactEmail,
       notes,
+      hallId,
     } = body || {};
 
     const newTitle =
@@ -118,6 +119,22 @@ export async function PATCH(
 
     const newNotes = typeof notes === 'string' ? notes : booking.notes;
 
+    let newHallId: string | null = booking.hallId;
+
+    if (booking.locationType === 'GURDWARA') {
+      if (hallId === null) {
+        // explicit null → clear hall
+        newHallId = null;
+      } else if (typeof hallId === 'string') {
+        // empty string = keep existing, non-empty = switch hall
+        newHallId = hallId || booking.hallId;
+      }
+      // if hallId is undefined, we just keep booking.hallId
+    } else {
+      // Outside bookings never have a hall
+      newHallId = null;
+    }
+
     // Compute shift delta (how much we move everything by)
     const deltaMs = newStart.getTime() - prevStart.getTime();
     const durationChanged = newEnd.getTime() - prevEnd.getTime() !== deltaMs;
@@ -135,6 +152,7 @@ export async function PATCH(
           contactPhone: newContactPhone,
           contactEmail: newContactEmail,
           notes: newNotes,
+          hallId: newHallId,
         },
         include: {
           hall: { select: { name: true } },
