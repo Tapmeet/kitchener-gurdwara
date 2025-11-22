@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/db';
+import { SpaceRecurrence } from '@/generated/prisma/client';
+import { spaceBookingOverlaps } from '@/lib/spaceBookings';
 
 const HALL_PATTERNS = {
   small: /(^|\b)(small\s*hall|hall\s*2)(\b|$)/i,
@@ -43,7 +45,7 @@ export async function pickFirstFittingHall(
     ...halls.filter((h) => ![small?.id, main?.id, upper?.id].includes(h.id)),
   ].filter(Boolean) as { id: string; name: string; capacity: number | null }[];
 
-  const overlapping = await prisma.booking.findMany({
+  const overlappingBookings = await prisma.booking.findMany({
     where: {
       locationType: 'GURDWARA',
       hallId: { not: null },
@@ -53,7 +55,52 @@ export async function pickFirstFittingHall(
     },
     select: { hallId: true },
   });
-  const busy = new Set(overlapping.map((b) => b.hallId!));
+
+  const spaceTemplates = await prisma.spaceBooking.findMany({
+    where: {
+      isActive: true,
+      blocksHall: true,
+      locationType: 'GURDWARA',
+      hallId: { not: null },
+      start: { lt: end },
+      OR: [{ until: null }, { until: { gt: start } }],
+    },
+    select: {
+      hallId: true,
+      start: true,
+      end: true,
+      recurrence: true,
+      interval: true,
+      until: true,
+    },
+  });
+
+  const busy = new Set<string>();
+
+  // Normal bookings
+  for (const b of overlappingBookings) {
+    if (b.hallId) busy.add(b.hallId);
+  }
+
+  // Recurring space bookings that block a hall
+  for (const sb of spaceTemplates) {
+    if (!sb.hallId) continue;
+    if (
+      spaceBookingOverlaps(
+        {
+          start: sb.start,
+          end: sb.end,
+          recurrence: sb.recurrence as SpaceRecurrence,
+          interval: sb.interval,
+          until: sb.until,
+        },
+        start,
+        end
+      )
+    ) {
+      busy.add(sb.hallId);
+    }
+  }
 
   const need = Math.max(1, attendees);
   for (const hall of prioritized) {

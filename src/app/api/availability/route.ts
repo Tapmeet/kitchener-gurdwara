@@ -1,7 +1,7 @@
 // src/app/api/availability/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { LocationType, ProgramCategory } from '@prisma/client';
+import { LocationType, ProgramCategory } from '@/generated/prisma/client';
 import {
   BUSINESS_HOURS_24,
   allowedStartHoursFor,

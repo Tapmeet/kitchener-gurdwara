@@ -20,7 +20,7 @@ import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 import { pickFirstFittingHall } from '@/lib/halls';
-import { ProgramCategory } from '@prisma/client';
+import { ProgramCategory } from '@/generated/prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 const ENFORCE_WHOLE_JATHA = process.env.ENFORCE_WHOLE_JATHA === '1';

@@ -30,7 +30,7 @@ import { notifyAssignmentsStaff } from '@/lib/assignment-notify-staff';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
 import { pickFirstFittingHall } from '@/lib/halls';
-import { ProgramCategory } from '@prisma/client';
+import { ProgramCategory } from '@/generated/prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 const ENFORCE_WHOLE_JATHA = process.env.ENFORCE_WHOLE_JATHA === '1';
@@ -340,7 +340,7 @@ export async function POST(req: Request) {
     const trailingMax = Math.max(
       ...programs.map((p) => p.trailingKirtanMinutes ?? 0)
     );
-    
+
     const needsTrailingJatha = trailingMax > 0 && ENFORCE_WHOLE_JATHA;
 
     if (needsTrailingJatha) {

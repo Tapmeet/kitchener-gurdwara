@@ -1,15 +1,24 @@
 // prisma/seed.ts
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
+import { PrismaNeon } from '@prisma/adapter-neon';
 import {
   PrismaClient,
   ProgramCategory,
   StaffSkill,
   Jatha,
   UserRole,
-} from '@prisma/client';
+} from '@/generated/prisma/client';
 
-const prisma = new PrismaClient();
+// Use DIRECT_URL for seeding/migrations, fall back to DATABASE_URL if needed
+const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DIRECT_URL or DATABASE_URL must be set for seeding');
+}
+
+const adapter = new PrismaNeon({ connectionString });
+const prisma = new PrismaClient({ adapter });
 
 async function upsertHall(name: string, capacity: number | null) {
   await prisma.hall.upsert({
