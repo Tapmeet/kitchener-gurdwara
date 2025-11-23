@@ -328,16 +328,6 @@ export default function CalendarView() {
               }
             }}
             eventClick={onEventClick}
-            slotLabelFormat={{
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            }}
-            eventTimeFormat={{
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            }}
             loading={(isLoading) => setLoading(isLoading)}
             datesSet={(arg) => {
               setTitle(arg.view.title);
