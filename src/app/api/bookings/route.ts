@@ -725,7 +725,6 @@ export async function POST(req: Request) {
     }
 
     // notifications
-    // notifications
     const { date: startDate, time: startTime } = toLocalParts(created.start);
     const { time: endTime } = toLocalParts(created.end);
 
