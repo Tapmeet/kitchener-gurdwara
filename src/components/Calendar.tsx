@@ -453,11 +453,6 @@ export default function CalendarView() {
             --fc-event-border-color: #596eab;
           }
 
-          /* Only blue events (bookings + space bookings) get white text */
-          .fancy-fc .fc-event.event-blue {
-            color: #ffffff !important;
-          }
-
           /* Grid views */
           .fancy-fc .fc {
             font-size: 0.95rem;
@@ -472,7 +467,7 @@ export default function CalendarView() {
           .fancy-fc .fc-event {
             border-radius: 0.75rem;
             box-shadow: 0 4px 12px rgba(2, 6, 23, 0.1);
-            border: 1px solid var(--fc-event-border-color);
+            background-color: var(--fc-event-border-color);
             overflow: visible;
           }
           .fancy-fc .fc-event:hover {
@@ -567,7 +562,7 @@ export default function CalendarView() {
           .fancy-fc .public-booked.fc-daygrid-event,
           .fancy-fc .public-booked.fc-timegrid-event {
             background: rgba(107, 114, 128, 0.18);
-            color: rgba(31, 41, 55, 0.95);
+            color: rgba(31, 41, 55, 0.95) !important;
             border-color: rgba(0, 0, 0, 0.08);
           }
           .fancy-fc .public-booked .fcgb-chip {
