@@ -4,6 +4,10 @@ import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
 import { VENUE_TZ, isWithinBusinessHours } from '@/lib/businessHours';
 import { sendEmail, renderBookingEmailCustomer } from '@/lib/notify';
+import { autoAssignForBooking } from '@/lib/auto-assign';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 // env gating – reuse same semantics as creation route
 const VERCEL_ENV = process.env.VERCEL_ENV;
@@ -50,11 +54,11 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    // Get current booking (including hall for email + previous times)
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
         hall: { select: { name: true } },
+        items: { select: { id: true, programTypeId: true } },
       },
     });
 
@@ -74,6 +78,8 @@ export async function PATCH(
       contactPhone,
       contactEmail,
       notes,
+      hallId,
+      programTypeIds,
     } = body || {};
 
     const newTitle =
@@ -82,7 +88,7 @@ export async function PATCH(
     const newStart = start ? new Date(start) : booking.start;
     const newEnd = end ? new Date(end) : booking.end;
 
-    // Business-hours guard (same semantics as create, non-long bookings)
+    // Business-hours guard (same semantics as create)
     const bh = isWithinBusinessHours(newStart, newEnd, VENUE_TZ);
     if (!bh.ok) {
       return NextResponse.json(
@@ -118,12 +124,41 @@ export async function PATCH(
 
     const newNotes = typeof notes === 'string' ? notes : booking.notes;
 
-    // Compute shift delta (how much we move everything by)
+    // Hall logic (only applies for Gurdwara bookings)
+    let newHallId: string | null = booking.hallId;
+
+    if (booking.locationType === 'GURDWARA') {
+      if (hallId === null) {
+        newHallId = null;
+      } else if (typeof hallId === 'string') {
+        newHallId = hallId || booking.hallId;
+      }
+    } else {
+      newHallId = null;
+    }
+
+    // Program type changes (optional)
+    const currentProgramTypeIds = booking.items
+      .map((i) => i.programTypeId)
+      .sort();
+
+    const incomingProgramTypeIds = Array.isArray(programTypeIds)
+      ? (programTypeIds as string[])
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+          .sort()
+      : null;
+
+    const programsChanged =
+      incomingProgramTypeIds !== null &&
+      JSON.stringify(incomingProgramTypeIds) !==
+        JSON.stringify(currentProgramTypeIds);
+
+    // Time shift
     const deltaMs = newStart.getTime() - prevStart.getTime();
-    const durationChanged = newEnd.getTime() - prevEnd.getTime() !== deltaMs;
 
     const updated = await prisma.$transaction(async (tx) => {
-      // 1) Update booking
+      // 1) Update main booking
       const updatedBooking = await tx.booking.update({
         where: { id },
         data: {
@@ -135,15 +170,50 @@ export async function PATCH(
           contactPhone: newContactPhone,
           contactEmail: newContactEmail,
           notes: newNotes,
+          hallId: newHallId,
+          // If program types changed, push back to PENDING and clear approval
+          ...(programsChanged
+            ? {
+                status: 'PENDING',
+                approvedAt: null,
+                approvedById: null,
+              }
+            : {}),
         },
         include: {
           hall: { select: { name: true } },
         },
       });
 
-      // 2) Shift assignment windows so sevadars/jathas follow the new time
-      //    We keep it simple: apply the same delta to each assignment's start/end.
-      if (deltaMs !== 0) {
+      // 2) If program set changed, replace booking items & clear all assignments
+      if (programsChanged && incomingProgramTypeIds) {
+        await tx.bookingAssignment.deleteMany({
+          where: { bookingId: id },
+        });
+
+        await tx.bookingItem.deleteMany({
+          where: { bookingId: id },
+        });
+
+        if (incomingProgramTypeIds.length) {
+          await tx.bookingItem.createMany({
+            data: incomingProgramTypeIds.map((ptId) => ({
+              bookingId: id,
+              programTypeId: ptId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        console.log(
+          '[admin bookings PATCH] Program types changed; reset to PENDING and cleared assignments',
+          {
+            bookingId: id,
+            programTypeIds: incomingProgramTypeIds,
+          }
+        );
+      } else if (deltaMs !== 0) {
+        // 3) If only the time changed, shift all assignment windows by the same delta
         const assignments = await tx.bookingAssignment.findMany({
           where: { bookingId: id },
           select: { id: true, start: true, end: true },
@@ -153,8 +223,6 @@ export async function PATCH(
           const oldStart = a.start ?? prevStart;
           const oldEnd = a.end ?? prevEnd;
 
-          // Use the same shift for start and end.
-          // If the duration changed, we still shift as-is (keeps relative offsets).
           const shiftedStart = new Date(oldStart.getTime() + deltaMs);
           const shiftedEnd = new Date(oldEnd.getTime() + deltaMs);
 
@@ -171,35 +239,59 @@ export async function PATCH(
           bookingId: id,
           deltaMs,
           hours: deltaMs / 3_600_000,
-          durationChanged,
         });
       }
 
       return updatedBooking;
     });
 
-    // Notify customer about change (prod only)
+    // 4) If program set changed, re-run auto-assign to create new PROPOSED rows
+    if (programsChanged) {
+      try {
+        const res = await autoAssignForBooking(id);
+        console.log(
+          '[admin bookings PATCH] Re-auto-assigned after program change',
+          {
+            bookingId: id,
+            createdCount: res?.created?.length ?? 0,
+          }
+        );
+      } catch (e) {
+        console.error(
+          '[admin bookings PATCH] autoAssignForBooking failed after program change',
+          e
+        );
+      }
+    }
+
+    // 5) Notify customer about change (prod only)
     if (shouldSendBookingNotifications && updated.contactEmail) {
-      const { date: startDate, time: startTime } = toLocalParts(updated.start);
-      const { time: endTime } = toLocalParts(updated.end);
+      try {
+        const { date: startDate, time: startTime } = toLocalParts(
+          updated.start
+        );
+        const { time: endTime } = toLocalParts(updated.end);
 
-      const customerHtml = renderBookingEmailCustomer({
-        bookingId: updated.id,
-        title: updated.title,
-        date: startDate,
-        startLocal: startTime,
-        endLocal: endTime,
-        locationType: updated.locationType,
-        hallName: updated.hall?.name ?? null,
-        address: updated.address,
-        attendees: updated.attendees,
-      });
+        const customerHtml = renderBookingEmailCustomer({
+          bookingId: updated.id,
+          title: updated.title,
+          date: startDate,
+          startLocal: startTime,
+          endLocal: endTime,
+          locationType: updated.locationType,
+          hallName: updated.hall?.name ?? null,
+          address: updated.address,
+          attendees: updated.attendees,
+        });
 
-      await sendEmail({
-        to: updated.contactEmail,
-        subject: 'Your booking was updated',
-        html: customerHtml,
-      });
+        await sendEmail({
+          to: updated.contactEmail,
+          subject: 'Your booking was updated',
+          html: customerHtml,
+        });
+      } catch (e) {
+        console.error('[admin bookings PATCH] Customer update email failed', e);
+      }
     } else {
       console.log('[admin bookings PATCH] Skipping customer email', {
         shouldSendBookingNotifications,

@@ -20,22 +20,35 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
     redirect(`/login?callbackUrl=/admin/bookings/${id}/edit`);
   }
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
-    include: {
-      hall: { select: { name: true } },
-      items: {
-        include: {
-          programType: {
-            select: {
-              name: true,
-              durationMinutes: true,
+  const [booking, halls, programTypes] = await Promise.all([
+    prisma.booking.findUnique({
+      where: { id },
+      include: {
+        hall: { select: { id: true, name: true } },
+        items: {
+          include: {
+            programType: {
+              select: {
+                id: true,
+                name: true,
+                durationMinutes: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.hall.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
+    prisma.programType.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
+  ]);
 
   if (!booking) {
     notFound();
@@ -49,11 +62,10 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
         )
       : 60;
 
-  // Same semantics as create route: ceil to full hours, at least 1
   const blockHours = Math.max(1, Math.ceil(maxDurationMinutes / 60));
 
   return (
-    <div className='p-6 max-w-3xl space-y-6 mx-auto'>
+    <div className='p-b-6 space-y-6 mx-auto'>
       <h1 className='text-lg font-semibold'>Admin · Edit booking</h1>
       <p className='text-xs text-gray-500'>Booking ID: {booking.id}</p>
 
@@ -64,6 +76,7 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
           start: booking.start.toISOString(),
           end: booking.end.toISOString(),
           locationType: booking.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA',
+          hallId: booking.hallId,
           hallName: booking.hall?.name ?? null,
           address: booking.address,
           attendees: booking.attendees,
@@ -73,8 +86,11 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
           notes: booking.notes,
           status: booking.status,
           programNames: booking.items.map((i) => i.programType.name),
+          programTypeIds: booking.items.map((i) => i.programTypeId),
           blockHours,
         }}
+        halls={halls}
+        programTypes={programTypes}
       />
     </div>
   );
