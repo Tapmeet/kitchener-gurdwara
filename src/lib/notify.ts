@@ -347,7 +347,7 @@ export function renderBookingText(args: BookingTextArgs): string {
     `"${title}" on ${date}, ${startLocal}–${endLocal}.`,
     `Location: ${where}.`,
     progLine,
-    'We will confirm after review.',
+    'Booking Hall/Time is subject to change & we will confirm after review.',
   ]
     .filter(Boolean)
     .join('\n');
