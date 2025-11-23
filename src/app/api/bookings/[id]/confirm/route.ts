@@ -70,9 +70,41 @@ export async function POST(
         },
       };
     }
-  } catch {}
+  } catch {
+    // ignore approver resolution failures; booking will still be confirmed
+  }
 
-  // 1) Mark booking confirmed (and stamp approver)
+  // 1) See if there are already PROPOSED assignments (e.g. from create or edit)
+  let pairs: { staffId: string; bookingItemId: string }[] =
+    await prisma.bookingAssignment
+      .findMany({
+        where: { bookingId: id, state: 'PROPOSED' },
+        select: { staffId: true, bookingItemId: true },
+      })
+      .then((rows) =>
+        rows
+          .filter((r) => r.staffId && r.bookingItemId)
+          .map((r) => ({
+            staffId: r.staffId,
+            bookingItemId: r.bookingItemId,
+          }))
+      );
+
+  // 2) If none, run auto-assign once as a fallback
+  if (!pairs.length) {
+    try {
+      const res = await autoAssignForBooking(id);
+      pairs =
+        res?.created?.map((a: any) => ({
+          staffId: a.staffId,
+          bookingItemId: a.bookingItemId,
+        })) ?? [];
+    } catch (e) {
+      console.error('Auto-assign during confirm failed:', e);
+    }
+  }
+
+  // 3) Mark booking confirmed (and stamp approver)
   const updated = await prisma.booking.update({
     where: { id },
     data: { status: 'CONFIRMED', approvedAt: new Date(), ...approvedByData },
@@ -81,33 +113,22 @@ export async function POST(
     },
   });
 
-  // 2) Optional: run auto-assign to fill any gaps
-  let createdCount = 0;
-  try {
-    const res = await autoAssignForBooking(updated.id);
-    createdCount = res?.created?.length ?? 0;
-
-    if (createdCount) {
-      await notifyAssignmentsStaff(
-        updated.id,
-        res.created.map((a) => ({
-          staffId: a.staffId,
-          bookingItemId: a.bookingItemId,
-        }))
-      );
-    }
-  } catch (e) {
-    console.error('Auto-assign during confirm failed:', e);
-    // keep confirmation successful
-  }
-
-  // 3) Finalize all remaining PROPOSED assignments for this booking
+  // 4) Finalize any PROPOSED assignments to CONFIRMED
   await prisma.bookingAssignment.updateMany({
     where: { bookingId: updated.id, state: 'PROPOSED' },
     data: { state: 'CONFIRMED' },
   });
 
-  // 4) Notify customer that their booking is CONFIRMED
+  // 5) Notify staff for all assignments that were just confirmed
+  try {
+    if (pairs.length) {
+      await notifyAssignmentsStaff(updated.id, pairs);
+    }
+  } catch (e) {
+    console.error('Staff notification failed during confirm:', e);
+  }
+
+  // 6) Notify customer that their booking is CONFIRMED
   try {
     const customerEmail = updated.contactEmail;
     const customerPhone = updated.contactPhone;
@@ -155,7 +176,7 @@ export async function POST(
   }
 
   return NextResponse.json(
-    { ok: true, id: updated.id, createdCount },
+    { ok: true, id: updated.id, notifiedCount: pairs.length },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }

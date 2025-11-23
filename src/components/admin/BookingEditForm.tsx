@@ -1,3 +1,4 @@
+// src/components/admin/BookingEditForm.tsx
 'use client';
 
 import React, { useMemo, useState } from 'react';
@@ -10,6 +11,7 @@ type BookingEditFormProps = {
     start: string; // ISO
     end: string; // ISO
     locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
+    hallId: string | null;
     hallName: string | null;
     address: string | null;
     attendees: number;
@@ -19,8 +21,11 @@ type BookingEditFormProps = {
     notes: string | null;
     status: string;
     programNames: string[];
-    blockHours: number; // ⬅️ derived from program type durations
+    programTypeIds: string[];
+    blockHours: number;
   };
+  halls: { id: string; name: string }[];
+  programTypes: { id: string; name: string }[];
 };
 
 type HourOption = { value: string; label: string };
@@ -29,12 +34,9 @@ type HourOption = { value: string; label: string };
 const HOUR_OPTIONS: HourOption[] = (() => {
   const out: HourOption[] = [];
   for (let h = 7; h <= 20; h++) {
-    const dt = new Date();
-    dt.setHours(h, 0, 0, 0);
-    const label = dt.toLocaleTimeString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    const hour12 = ((h + 11) % 12) + 1; // 0->12, 13->1, etc.
+    const suffix = h < 12 ? 'AM' : 'PM';
+    const label = `${hour12}:00 ${suffix}`;
     const value = `${String(h).padStart(2, '0')}:00`;
     out.push({ value, label });
   }
@@ -52,7 +54,11 @@ function combineDateAndTime(date: string, time: string): string {
   return new Date(`${date}T${time}:00`).toISOString();
 }
 
-const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
+const BookingEditForm: React.FC<BookingEditFormProps> = ({
+  booking,
+  halls,
+  programTypes,
+}) => {
   const router = useRouter();
 
   const initial = useMemo(() => {
@@ -76,6 +82,12 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
   const [contactPhone, setContactPhone] = useState(booking.contactPhone);
   const [contactEmail, setContactEmail] = useState(booking.contactEmail ?? '');
   const [notes, setNotes] = useState(booking.notes ?? '');
+  const [hallId, setHallId] = useState<string>(booking.hallId ?? '');
+
+  // 🔹 SINGLE program selection – take first existing program as initial
+  const [selectedProgram, setSelectedProgram] = useState<string>(
+    booking.programTypeIds?.[0] ?? ''
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +121,11 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
       return;
     }
 
+    if (!selectedProgram) {
+      setError('Please select a program.');
+      return;
+    }
+
     const startIso = combineDateAndTime(startDate, startTime);
     const endIso = combineDateAndTime(endDate, endTime);
 
@@ -126,6 +143,9 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
           contactPhone: contactPhone.trim(),
           contactEmail: contactEmail.trim() || null,
           notes,
+          hallId: booking.locationType === 'GURDWARA' ? hallId || null : null,
+          // 🔥 send exactly ONE program type id in the array
+          programTypeIds: [selectedProgram],
         }),
       });
 
@@ -136,6 +156,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
             'Failed to save booking. Please check times and try again.'
         );
       } else {
+        await res.json().catch(() => ({}));
         setSaved(true);
         router.refresh();
       }
@@ -146,6 +167,10 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
       setSaving(false);
     }
   }
+
+  // Derive current program name from selection
+  const selectedProgramName =
+    programTypes.find((pt) => pt.id === selectedProgram)?.name ?? null;
 
   return (
     <form onSubmit={handleSubmit} className='space-y-6'>
@@ -177,7 +202,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
                 onChange={(e) => {
                   const v = e.target.value;
                   setStartDate(v);
-                  autoAdjustEnd(v, startTime); // ⬅️ adjust end
+                  autoAdjustEnd(v, startTime);
                 }}
               />
               <label className='block text-xs text-gray-500 mt-2 mb-1'>
@@ -189,7 +214,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
                 onChange={(e) => {
                   const v = e.target.value;
                   setStartTime(v);
-                  autoAdjustEnd(startDate, v); // ⬅️ adjust end
+                  autoAdjustEnd(startDate, v);
                 }}
               >
                 {HOUR_OPTIONS.map((opt) => (
@@ -230,6 +255,68 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
             End date/time auto-fills from the program length (≈
             {booking.blockHours} hour
             {booking.blockHours > 1 ? 's' : ''}) when you change the start.
+          </p>
+        </div>
+
+        {/* Location / hall (admin-editable) */}
+        <div>
+          <div className='text-sm font-medium text-gray-700 mb-1'>
+            Location / hall
+          </div>
+
+          {booking.locationType === 'GURDWARA' ? (
+            <div className='space-y-1 text-sm'>
+              <label className='block text-xs text-gray-500 mb-1'>
+                Hall at the Gurdwara
+              </label>
+              <select
+                className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
+                value={hallId}
+                onChange={(e) => setHallId(e.target.value)}
+              >
+                <option value=''>Auto / unspecified hall</option>
+                {halls.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+              <p className='mt-1 text-xs text-gray-500'>
+                Changing the hall does not re-run auto-picking; make sure the
+                new hall is free and suitable.
+              </p>
+            </div>
+          ) : (
+            <div className='text-xs text-gray-500'>
+              Outside booking – address:{' '}
+              <span className='font-medium'>
+                {booking.address || 'Not specified'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Program (admin-editable, single-select) */}
+        <div>
+          <div className='text-sm font-medium text-gray-700 mb-1'>Program</div>
+          <div className='space-y-1 text-sm'>
+            {programTypes.map((pt) => (
+              <label key={pt.id} className='flex items-center gap-2'>
+                <input
+                  type='radio'
+                  name='programType'
+                  className='border-gray-300'
+                  checked={selectedProgram === pt.id}
+                  onChange={() => setSelectedProgram(pt.id)}
+                />
+                <span>{pt.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className='mt-1 text-xs text-gray-500'>
+            Changing the program will reset this booking back to <b>Pending</b>{' '}
+            and clear all staff assignments. Re-approve it from the admin
+            bookings page to regenerate staffing.
           </p>
         </div>
 
@@ -298,13 +385,8 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({ booking }) => {
         {/* Read-only info */}
         <div className='border-t pt-3 mt-2 text-xs text-gray-500 space-y-1'>
           <div>
-            <b>Location:</b>{' '}
-            {booking.locationType === 'GURDWARA'
-              ? booking.hallName || 'Gurdwara'
-              : booking.address || 'Outside'}
-          </div>
-          <div>
-            <b>Programs:</b> {booking.programNames.join(', ')}
+            <b>Program:</b>{' '}
+            {selectedProgramName ? selectedProgramName : 'None selected'}
           </div>
           <div>
             <b>Status:</b> {booking.status}
