@@ -20,20 +20,16 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
     redirect(`/login?callbackUrl=/admin/bookings/${id}/edit`);
   }
 
-  const [booking, halls] = await Promise.all([
+  const [booking, halls, programTypes] = await Promise.all([
     prisma.booking.findUnique({
       where: { id },
       include: {
-        hall: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        hall: { select: { id: true, name: true } },
         items: {
           include: {
             programType: {
               select: {
+                id: true,
                 name: true,
                 durationMinutes: true,
               },
@@ -45,10 +41,12 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
     prisma.hall.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
-      select: {
-        id: true,
-        name: true,
-      },
+      select: { id: true, name: true },
+    }),
+    prisma.programType.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
     }),
   ]);
 
@@ -67,7 +65,7 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
   const blockHours = Math.max(1, Math.ceil(maxDurationMinutes / 60));
 
   return (
-    <div className='p-6 max-w-3xl space-y-6 mx-auto'>
+    <div className='p-b-6 space-y-6 mx-auto'>
       <h1 className='text-lg font-semibold'>Admin · Edit booking</h1>
       <p className='text-xs text-gray-500'>Booking ID: {booking.id}</p>
 
@@ -88,9 +86,11 @@ export default async function AdminBookingEditPage({ params }: PageProps) {
           notes: booking.notes,
           status: booking.status,
           programNames: booking.items.map((i) => i.programType.name),
+          programTypeIds: booking.items.map((i) => i.programTypeId),
           blockHours,
         }}
         halls={halls}
+        programTypes={programTypes}
       />
     </div>
   );

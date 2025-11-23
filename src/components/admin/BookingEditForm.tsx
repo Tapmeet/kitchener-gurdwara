@@ -1,3 +1,4 @@
+// src/components/admin/BookingEditForm.tsx
 'use client';
 
 import React, { useMemo, useState } from 'react';
@@ -20,9 +21,11 @@ type BookingEditFormProps = {
     notes: string | null;
     status: string;
     programNames: string[];
+    programTypeIds: string[];
     blockHours: number;
   };
   halls: { id: string; name: string }[];
+  programTypes: { id: string; name: string }[];
 };
 
 type HourOption = { value: string; label: string };
@@ -31,12 +34,9 @@ type HourOption = { value: string; label: string };
 const HOUR_OPTIONS: HourOption[] = (() => {
   const out: HourOption[] = [];
   for (let h = 7; h <= 20; h++) {
-    const dt = new Date();
-    dt.setHours(h, 0, 0, 0);
-    const label = dt.toLocaleTimeString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    const hour12 = ((h + 11) % 12) + 1; // 0->12, 13->1, etc.
+    const suffix = h < 12 ? 'AM' : 'PM';
+    const label = `${hour12}:00 ${suffix}`;
     const value = `${String(h).padStart(2, '0')}:00`;
     out.push({ value, label });
   }
@@ -57,6 +57,7 @@ function combineDateAndTime(date: string, time: string): string {
 const BookingEditForm: React.FC<BookingEditFormProps> = ({
   booking,
   halls,
+  programTypes,
 }) => {
   const router = useRouter();
 
@@ -82,6 +83,11 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
   const [contactEmail, setContactEmail] = useState(booking.contactEmail ?? '');
   const [notes, setNotes] = useState(booking.notes ?? '');
   const [hallId, setHallId] = useState<string>(booking.hallId ?? '');
+
+  // 🔹 SINGLE program selection – take first existing program as initial
+  const [selectedProgram, setSelectedProgram] = useState<string>(
+    booking.programTypeIds?.[0] ?? ''
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +121,11 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
       return;
     }
 
+    if (!selectedProgram) {
+      setError('Please select a program.');
+      return;
+    }
+
     const startIso = combineDateAndTime(startDate, startTime);
     const endIso = combineDateAndTime(endDate, endTime);
 
@@ -133,6 +144,8 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
           contactEmail: contactEmail.trim() || null,
           notes,
           hallId: booking.locationType === 'GURDWARA' ? hallId || null : null,
+          // 🔥 send exactly ONE program type id in the array
+          programTypeIds: [selectedProgram],
         }),
       });
 
@@ -143,6 +156,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
             'Failed to save booking. Please check times and try again.'
         );
       } else {
+        await res.json().catch(() => ({}));
         setSaved(true);
         router.refresh();
       }
@@ -153,6 +167,10 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
       setSaving(false);
     }
   }
+
+  // Derive current program name from selection
+  const selectedProgramName =
+    programTypes.find((pt) => pt.id === selectedProgram)?.name ?? null;
 
   return (
     <form onSubmit={handleSubmit} className='space-y-6'>
@@ -184,7 +202,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 onChange={(e) => {
                   const v = e.target.value;
                   setStartDate(v);
-                  autoAdjustEnd(v, startTime); // ⬅️ adjust end
+                  autoAdjustEnd(v, startTime);
                 }}
               />
               <label className='block text-xs text-gray-500 mt-2 mb-1'>
@@ -196,7 +214,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 onChange={(e) => {
                   const v = e.target.value;
                   setStartTime(v);
-                  autoAdjustEnd(startDate, v); // ⬅️ adjust end
+                  autoAdjustEnd(startDate, v);
                 }}
               >
                 {HOUR_OPTIONS.map((opt) => (
@@ -278,6 +296,30 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
           )}
         </div>
 
+        {/* Program (admin-editable, single-select) */}
+        <div>
+          <div className='text-sm font-medium text-gray-700 mb-1'>Program</div>
+          <div className='space-y-1 text-sm'>
+            {programTypes.map((pt) => (
+              <label key={pt.id} className='flex items-center gap-2'>
+                <input
+                  type='radio'
+                  name='programType'
+                  className='border-gray-300'
+                  checked={selectedProgram === pt.id}
+                  onChange={() => setSelectedProgram(pt.id)}
+                />
+                <span>{pt.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className='mt-1 text-xs text-gray-500'>
+            Changing the program will reset this booking back to <b>Pending</b>{' '}
+            and clear all staff assignments. Re-approve it from the admin
+            bookings page to regenerate staffing.
+          </p>
+        </div>
+
         {/* Attendees */}
         <div>
           <label className='block text-sm font-medium text-gray-700'>
@@ -343,7 +385,8 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
         {/* Read-only info */}
         <div className='border-t pt-3 mt-2 text-xs text-gray-500 space-y-1'>
           <div>
-            <b>Programs:</b> {booking.programNames.join(', ')}
+            <b>Program:</b>{' '}
+            {selectedProgramName ? selectedProgramName : 'None selected'}
           </div>
           <div>
             <b>Status:</b> {booking.status}

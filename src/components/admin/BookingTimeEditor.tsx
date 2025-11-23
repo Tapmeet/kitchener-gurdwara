@@ -52,11 +52,12 @@ export default function BookingTimeEditor({
     setError(null);
     setOkMsg(null);
 
-    const startIso = `${startDate}T${startHour}:00`;
-    const endIso = `${endDate}T${endHour}:00`;
+    // Build real Date objects and send ISO strings (UTC)
+    const startIso = new Date(`${startDate}T${startHour}:00`).toISOString();
+    const endIso = new Date(`${endDate}T${endHour}:00`).toISOString();
 
     startTransition(async () => {
-      const res = await fetch(`/api/admin/bookings/${bookingId}/time`, {
+      const res = await fetch(`/api/admin/bookings/${bookingId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ start: startIso, end: endIso }),
