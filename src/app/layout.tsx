@@ -8,11 +8,54 @@ import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { Info } from 'lucide-react';
+
+// Derive metadataBase from NEXTAUTH_URL so all OG/canonical URLs are correct
+let metadataBase: URL | undefined;
+const nextAuthUrl = process.env.NEXTAUTH_URL;
+
+if (nextAuthUrl) {
+  try {
+    const url = new URL(nextAuthUrl);
+    metadataBase = new URL(url.origin);
+  } catch {
+    // ignore invalid NEXTAUTH_URL, metadataBase will stay undefined
+  }
+}
 
 export const metadata: Metadata = {
-  title: 'Gurdwara Booking',
-  description: 'Calendar & bookings for programs',
+  metadataBase,
+  title: {
+    default: 'Gurdwara Booking',
+    template: '%s | Gurdwara Booking',
+  },
+  description:
+    'Calendar and online booking system for programs at the Golden Triangle Sikh Association Gurdwara.',
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    title: 'Gurdwara Booking',
+    description:
+      'View the Gurdwara calendar, book programs, and see seva assignments for the Golden Triangle Sikh Association.',
+    url: '/',
+    siteName: 'Golden Triangle Sikh Association',
+    type: 'website',
+    images: [
+      {
+        url: '/og-gurdwara.png',
+        width: 1200,
+        height: 630,
+        alt: 'Gurdwara Booking – Golden Triangle Sikh Association',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Gurdwara Booking',
+    description:
+      'Calendar and booking system for programs at the Golden Triangle Sikh Association Gurdwara.',
+    images: ['/og-gurdwara.png'],
+  },
 };
 
 export const revalidate = 0;
@@ -87,7 +130,8 @@ export default async function RootLayout({
           <footer className='border-t border-black/5'>
             <div className='container mx-auto px-4 py-6 text-sm text-gray-500'>
               {/* If you ever see a mismatch here (rare), wrap year in <span suppressHydrationWarning> */}
-              © {year} Golden Triangle Sikh Association - Developed by Tapmeet Singh
+              © {year} Golden Triangle Sikh Association - Developed by Tapmeet
+              Singh
             </div>
           </footer>
 

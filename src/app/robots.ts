@@ -2,18 +2,34 @@ import type { MetadataRoute } from 'next';
 
 export default function robots(): MetadataRoute.Robots {
   const nextAuthUrl = process.env.NEXTAUTH_URL;
+  const vercelEnv = process.env.VERCEL_ENV;
+  const nodeEnv = process.env.NODE_ENV;
 
-  // Safely derive the origin from NEXTAUTH_URL
+  const isProd =
+    vercelEnv === 'production' || (!vercelEnv && nodeEnv === 'production');
+
   let baseUrl = 'http://localhost:3000';
   if (nextAuthUrl) {
     try {
       baseUrl = new URL(nextAuthUrl).origin;
     } catch {
-      // If NEXTAUTH_URL is somehow invalid, keep the default
       console.warn('Invalid NEXTAUTH_URL, falling back to localhost');
     }
   }
 
+  // Block everything on non-prod
+  if (!isProd) {
+    return {
+      rules: [
+        {
+          userAgent: '*',
+          disallow: ['/'],
+        },
+      ],
+    };
+  }
+
+  // Production rules
   return {
     rules: [
       {
