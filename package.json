@@ -79,6 +79,7 @@
     "@types/react": "19.1.13",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.21",
+    "baseline-browser-mapping": "^2.8.31",
     "cross-env": "^10.0.0",
     "dotenv-cli": "^7.4.4",
     "eslint": "^9",
