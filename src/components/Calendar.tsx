@@ -296,9 +296,23 @@ export default function CalendarView() {
         )}
 
         {/* Calendar */}
-        <p className='mt-2 mb-1 text-xs text-gray-500'>
-          Tip: Click any blue block to see full details.
-        </p>
+        <div className='mt-2 mb-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900'>
+          <span
+            className='mt-0.5 inline-flex h-3 w-3 flex-shrink-0 rounded-sm bg-emerald-400 shadow-inner'
+            aria-hidden='true'
+          />
+          <div>
+            <span className='block font-semibold'>
+              Special programs from Gurdwara Sahib
+            </span>
+            <span className='block'>
+              Look for the <span className='font-semibold'>green blocks</span>{' '}
+              in the calendar and tap/click them to see full details of GTSA
+              programs.
+            </span>
+          </div>
+        </div>
+
         <div className='fancy-fc'>
           <FullCalendar
             ref={calRef as any}
