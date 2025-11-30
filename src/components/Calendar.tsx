@@ -438,9 +438,30 @@ export default function CalendarView() {
             --fc-button-text-color: rgb(17, 24, 39);
             --fc-today-bg-color: rgba(59, 130, 246, 0.08);
             --fc-now-indicator-color: #ef4444;
-            --fc-event-text-color: rgb(17, 24, 39); /* default dark text */
-            --fc-event-bg-color: #5a6eab;
-            --fc-event-border-color: #596eab;
+            --fc-event-text-color: rgb(17, 24, 39); /* dark text */
+            /* fallback if no custom class hits */
+            --fc-event-bg-color: #e0ebff;
+            --fc-event-border-color: #bfdbfe;
+          }
+
+          /* 🎨 Event palettes (admin + public) */
+
+          /* Normal booking, CONFIRMED */
+          .fancy-fc .fc-event.booking.booking-confirmed {
+            background-color: #e0ebff; /* soft blue */
+            border-color: #bfdbfe;
+          }
+
+          /* Normal booking, PENDING */
+          .fancy-fc .fc-event.booking.booking-pending {
+            background-color: #fef3c7; /* soft amber */
+            border-color: #fde68a;
+          }
+
+          /* Space bookings (recurring blocks, etc.) */
+          .fancy-fc .fc-event.space-booking {
+            background-color: #dcfce7; /* soft green */
+            border-color: #bbf7d0;
           }
 
           /* Grid views */

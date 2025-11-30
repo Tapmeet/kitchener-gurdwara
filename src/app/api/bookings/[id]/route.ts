@@ -43,15 +43,20 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  // ⬅️ params must be awaited on Next.js 15+
   const { id } = await ctx.params;
 
   const session = await getServerSession(authOptions);
-  const role = (session?.user as any)?.role;
-  const isAdmin = role === 'ADMIN';
-  if (!isAdmin)
+  const role = (session?.user as any)?.role as string | undefined;
+
+  const canViewBooking = role === 'ADMIN' || role === 'STAFF';
+
+  if (!canViewBooking) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  }
+
+  if (!id) {
+    return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+  }
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -71,7 +76,7 @@ export async function GET(
             },
           },
         },
-        orderBy: { createdAt: 'asc' }, // valid on BookingAssignment
+        orderBy: { createdAt: 'asc' },
       },
       createdBy: { select: { id: true, name: true, email: true } },
     },
