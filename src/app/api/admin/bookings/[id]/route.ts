@@ -79,6 +79,8 @@ export async function PATCH(
       contactEmail,
       notes,
       hallId,
+      locationType,
+      address,
       programTypeIds,
     } = body || {};
 
@@ -123,18 +125,40 @@ export async function PATCH(
     }
 
     const newNotes = typeof notes === 'string' ? notes : booking.notes;
+    // Location type – allow switching between Gurdwara / outside
+    let newLocationType = booking.locationType;
+    if (locationType === 'GURDWARA' || locationType === 'OUTSIDE_GURDWARA') {
+      newLocationType = locationType;
+    }
 
-    // Hall logic (only applies for Gurdwara bookings)
+    // Hall logic depends on location type
     let newHallId: string | null = booking.hallId;
 
-    if (booking.locationType === 'GURDWARA') {
+    if (newLocationType === 'GURDWARA') {
       if (hallId === null) {
         newHallId = null;
       } else if (typeof hallId === 'string') {
-        newHallId = hallId || booking.hallId;
+        const trimmed = hallId.trim();
+        newHallId = trimmed || null;
       }
     } else {
+      // Outside Gurdwara: never keep a hall
       newHallId = null;
+    }
+
+    // Address logic – only for outside bookings
+    let newAddress: string | null = booking.address;
+
+    if (newLocationType === 'OUTSIDE_GURDWARA') {
+      if (address === null) {
+        newAddress = null;
+      } else if (typeof address === 'string') {
+        const trimmed = address.trim();
+        newAddress = trimmed || null;
+      }
+    } else {
+      // Gurdwara bookings store no address
+      newAddress = null;
     }
 
     // Program type changes (optional)
@@ -170,8 +194,9 @@ export async function PATCH(
           contactPhone: newContactPhone,
           contactEmail: newContactEmail,
           notes: newNotes,
+          locationType: newLocationType,
           hallId: newHallId,
-          // If program types changed, push back to PENDING and clear approval
+          address: newAddress,
           ...(programsChanged
             ? {
                 status: 'PENDING',

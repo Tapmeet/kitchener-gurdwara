@@ -84,7 +84,12 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
   const [notes, setNotes] = useState(booking.notes ?? '');
   const [hallId, setHallId] = useState<string>(booking.hallId ?? '');
 
-  // 🔹 SINGLE program selection – take first existing program as initial
+  const [locationType, setLocationType] = useState<
+    'GURDWARA' | 'OUTSIDE_GURDWARA'
+  >(booking.locationType);
+
+  const [address, setAddress] = useState(booking.address ?? '');
+
   const [selectedProgram, setSelectedProgram] = useState<string>(
     booking.programTypeIds?.[0] ?? ''
   );
@@ -143,8 +148,10 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
           contactPhone: contactPhone.trim(),
           contactEmail: contactEmail.trim() || null,
           notes,
-          hallId: booking.locationType === 'GURDWARA' ? hallId || null : null,
-          // 🔥 send exactly ONE program type id in the array
+          locationType,
+          address:
+            locationType === 'OUTSIDE_GURDWARA' ? address.trim() || null : null,
+          hallId: locationType === 'GURDWARA' ? hallId || null : null,
           programTypeIds: [selectedProgram],
         }),
       });
@@ -260,17 +267,45 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
 
         {/* Location / hall (admin-editable) */}
         <div>
-          <div className='text-sm font-medium text-gray-700 mb-1'>
-            Location / hall
+          <div className='text-sm font-medium text-gray-700 mb-1'>Location</div>
+
+          {/* Toggle between Gurdwara / Outside */}
+          <div className='flex flex-wrap gap-4 mb-2 text-sm'>
+            <label className='flex items-center gap-2'>
+              <input
+                type='radio'
+                name='locationType'
+                value='GURDWARA'
+                checked={locationType === 'GURDWARA'}
+                onChange={() => {
+                  setLocationType('GURDWARA');
+                }}
+              />
+              <span>At the Gurdwara</span>
+            </label>
+            <label className='flex items-center gap-2'>
+              <input
+                type='radio'
+                name='locationType'
+                value='OUTSIDE_GURDWARA'
+                checked={locationType === 'OUTSIDE_GURDWARA'}
+                onChange={() => {
+                  setLocationType('OUTSIDE_GURDWARA');
+                  // hall doesn't apply outside
+                  setHallId('');
+                }}
+              />
+              <span>Outside Gurdwara</span>
+            </label>
           </div>
 
-          {booking.locationType === 'GURDWARA' ? (
+          {locationType === 'GURDWARA' ? (
             <div className='space-y-1 text-sm'>
               <label className='block text-xs text-gray-500 mb-1'>
                 Hall at the Gurdwara
               </label>
               <select
-                className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
+                className='block w-full rounded-md border ...'
                 value={hallId}
                 onChange={(e) => setHallId(e.target.value)}
               >
@@ -282,16 +317,26 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 ))}
               </select>
               <p className='mt-1 text-xs text-gray-500'>
-                Changing the hall does not re-run auto-picking; make sure the
-                new hall is free and suitable.
+                Changing the hall or location does not re-run auto-picking; make
+                sure the new hall is free and suitable.
               </p>
             </div>
           ) : (
-            <div className='text-xs text-gray-500'>
-              Outside booking – address:{' '}
-              <span className='font-medium'>
-                {booking.address || 'Not specified'}
-              </span>
+            <div className='space-y-1 text-sm'>
+              <label className='block text-xs text-gray-500 mb-1'>
+                Outside address
+              </label>
+              <input
+                type='text'
+                className='mt-1 block w-full rounded-md border ...'
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder='Street, city, etc.'
+              />
+              <p className='mt-1 text-xs text-gray-500'>
+                Outside bookings do not use a hall; travel time and buffers
+                still apply.
+              </p>
             </div>
           )}
         </div>
