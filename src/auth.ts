@@ -18,7 +18,7 @@ function parseAdminEmails(): string[] {
 }
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
+  adapter: PrismaAdapter(prisma as any),
   session: { strategy: 'jwt' },
   providers: [
     GoogleProvider({
