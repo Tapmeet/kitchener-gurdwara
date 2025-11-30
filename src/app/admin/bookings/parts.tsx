@@ -74,3 +74,52 @@ export function ApproveButtons({ id }: { id: string }) {
     </div>
   );
 }
+
+export function CancelBookingButton({ id }: { id: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function handleClick() {
+    const ok = window.confirm(
+      'Are you sure you want to cancel this booking? This will mark the booking as CANCELLED.'
+    );
+    if (!ok) return;
+
+    try {
+      setBusy(true);
+
+      const res = await fetch(`/api/bookings/${id}/cancel`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        // try to show a useful error if API returned one
+        let message = 'Failed to cancel booking.';
+        try {
+          const data = await res.json();
+          if (data?.error) message = data.error;
+        } catch {
+          // ignore JSON parse errors
+        }
+        alert(message);
+        return;
+      }
+
+      // refresh the Admin · Bookings page so status + filters update
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type='button'
+      onClick={handleClick}
+      disabled={busy}
+      className='text-s text-red-600 text-left underline hover:no-underline hover:text-red-700 disabled:opacity-60'
+    >
+      {busy ? 'Cancelling…' : 'Cancel booking'}
+    </button>
+  );
+}

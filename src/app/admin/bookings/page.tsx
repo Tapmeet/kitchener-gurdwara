@@ -1,7 +1,7 @@
 // src/app/admin/bookings/page.tsx
 import { prisma } from '@/lib/db';
 import { auth } from '@/lib/auth';
-import { ApproveButtons } from './parts';
+import { ApproveButtons, CancelBookingButton } from './parts';
 import ReviewProposed from '@/components/admin/ReviewProposed';
 import BookingTimeEditor from '@/components/admin/BookingTimeEditor';
 import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
@@ -429,6 +429,9 @@ export default async function AdminBookingsPage({
                     >
                       Edit booking
                     </a>
+                    {b.status !== 'CANCELLED' && (
+                      <CancelBookingButton id={b.id} />
+                    )}
                   </div>
                 </div>
               );
