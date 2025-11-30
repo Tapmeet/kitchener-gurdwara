@@ -305,7 +305,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 Hall at the Gurdwara
               </label>
               <select
-                className='block w-full rounded-md border ...'
+                className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 bg-white'
                 value={hallId}
                 onChange={(e) => setHallId(e.target.value)}
               >
@@ -328,7 +328,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
               </label>
               <input
                 type='text'
-                className='mt-1 block w-full rounded-md border ...'
+                className='mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder='Street, city, etc.'
