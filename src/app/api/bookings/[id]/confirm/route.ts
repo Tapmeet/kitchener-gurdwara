@@ -110,6 +110,17 @@ export async function POST(
     data: { status: 'CONFIRMED', approvedAt: new Date(), ...approvedByData },
     include: {
       hall: { select: { name: true } },
+      items: {
+        include: {
+          programType: {
+            select: {
+              name: true,
+              category: true,
+              durationMinutes: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -137,6 +148,13 @@ export async function POST(
       const { date: startDate, time: startTime } = toLocalParts(updated.start);
       const { time: endTime } = toLocalParts(updated.end);
 
+      const emailPrograms =
+        updated.items?.map((it) => ({
+          name: it.programType.name,
+          category: it.programType.category,
+          durationMinutes: it.programType.durationMinutes,
+        })) ?? [];
+
       const customerHtml = renderBookingEmailCustomerConfirmed({
         title: updated.title,
         date: startDate,
@@ -145,6 +163,7 @@ export async function POST(
         locationType: updated.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA',
         hallName: updated.hall?.name ?? null,
         address: updated.address,
+        programs: emailPrograms,
       });
 
       const smsText = renderBookingTextConfirmed({
@@ -155,6 +174,7 @@ export async function POST(
         locationType: updated.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA',
         hallName: updated.hall?.name ?? null,
         address: updated.address,
+        programs: emailPrograms,
       });
 
       await Promise.allSettled([

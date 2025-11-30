@@ -361,6 +361,7 @@ export function renderBookingEmailCustomerConfirmed(p: {
   locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
   hallName?: string | null;
   address?: string | null;
+  programs?: EmailProgramSummary[];
 }) {
   const where =
     p.locationType === 'GURDWARA'
@@ -373,6 +374,16 @@ export function renderBookingEmailCustomerConfirmed(p: {
     ? `If you need to change or cancel this booking, please contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
     : `If you need to change or cancel this booking, please contact ${BOOKING_CONTACT_NAME}.`;
 
+  const programsBlock =
+    p.programs && p.programs.length
+      ? `
+        <h3>Program(s)</h3>
+        <ul>
+          ${fmtPrograms(p.programs)}
+        </ul>
+      `
+      : '';
+
   return `
     <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
     <h2>Your booking has been confirmed</h2>
@@ -380,6 +391,7 @@ export function renderBookingEmailCustomerConfirmed(p: {
     <p><strong>${p.title}</strong></p>
     <p>${p.date} ${p.startLocal} – ${p.endLocal}</p>
     <p>${where}</p>
+    ${programsBlock}
 
     <p>Please arrive 10–15 minutes early and speak to the coordinator if needed.</p>
     <p>${contactLine}</p>
@@ -395,6 +407,7 @@ export function renderBookingTextConfirmed(p: {
   locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA';
   hallName?: string | null;
   address?: string | null;
+  programs?: EmailProgramSummary[];
 }) {
   const where =
     p.locationType === 'GURDWARA'
@@ -407,11 +420,17 @@ export function renderBookingTextConfirmed(p: {
     ? `If you need changes, contact ${BOOKING_CONTACT_NAME} at ${BOOKING_CONTACT_PHONE}.`
     : `If you need changes, contact ${BOOKING_CONTACT_NAME}.`;
 
+  const progLine =
+    p.programs && p.programs.length
+      ? `Program(s): ${p.programs.map((pr) => pr.name).join(', ')}\n`
+      : '';
+
   return (
     `Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.\n` +
     `Your booking is confirmed: ${p.title}\n` +
     `${p.date} ${p.startLocal}-${p.endLocal}\n` +
     `${where}\n` +
+    progLine +
     `Please arrive 10–15 minutes early.\n` +
     contactLine
   );
