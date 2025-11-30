@@ -51,6 +51,26 @@ function zonedLocalToUtc(dateStr: string, hour24: number, tz = VENUE_TZ): Date {
   }
   return utc;
 }
+function zonedLocalToUtcHM(
+  dateStr: string,
+  hour24: number,
+  minute: number,
+  tz = VENUE_TZ
+): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // Initial guess: treat local wall-time components as if they were UTC
+  let guess = new Date(Date.UTC(y, m - 1, d, hour24, minute, 0, 0));
+  // Get the zone offset (e.g. "-04:00") *at that instant*
+  let offMin = offsetStrToMinutes(formatInTimeZone(guess, tz, 'xxx'));
+  // Apply once
+  let utc = new Date(guess.getTime() - offMin * 60_000);
+  // One more iteration handles DST boundaries cleanly
+  const offMin2 = offsetStrToMinutes(formatInTimeZone(utc, tz, 'xxx'));
+  if (offMin2 !== offMin) {
+    utc = new Date(guess.getTime() - offMin2 * 60_000);
+  }
+  return utc;
+}
 
 /** Build a map hour(24)->Set<staffId> that are busy in that hour, honoring outside buffer
  * and per-assignment windows (start/end). Only counts PENDING/CONFIRMED. */
@@ -238,15 +258,22 @@ export async function GET(req: Request) {
       zonedLocalToUtc(ymdToNext(dateStr), 0, VENUE_TZ).getTime() - 1
     );
 
-    // Candidate start hours (in venue TZ)
-    const baseCandidates = isLong
+    // Candidate start hours (in venue TZ, coarse hours first)
+    const baseCandidatesHours = isLong
       ? [...BUSINESS_HOURS_24]
       : allowedStartHoursFor(dayStart, durationHours);
-    let candidates = baseCandidates;
+    let candidateHours = baseCandidatesHours;
 
     // Hide past hours if querying "today" (venue TZ)
     const minHourToday = minSelectableHour24(dayStart, new Date());
-    candidates = candidates.filter((h) => h >= minHourToday);
+    candidateHours = candidateHours.filter((h) => h >= minHourToday);
+
+    // Expand each allowed hour into :00 and :30 minute slots (minutes since midnight)
+    const candidates: number[] = [];
+    for (const h of candidateHours) {
+      candidates.push(h * 60); // h:00
+      candidates.push(h * 60 + 30); // h:30
+    }
 
     // Overlaps that touch the day
     const overlaps = await prisma.booking.findMany({
@@ -345,12 +372,15 @@ export async function GET(req: Request) {
     const totalPool = await getTotalPoolPerRole();
     const locMax = getMaxPerLocationPerRole(locationType);
 
-    const hours: number[] = [];
+    const hours: number[] = []; // now actually "slotMinutes"
     const remainingByHour: Record<number, RoleVector> = {};
 
-    for (const hStart of candidates) {
+    for (const startMinutes of candidates) {
+      const hour24 = Math.floor(startMinutes / 60);
+      const minute = startMinutes % 60;
+
       // Build span in venue time, convert to UTC
-      const spanStart = zonedLocalToUtc(dateStr, hStart, VENUE_TZ);
+      const spanStart = zonedLocalToUtcHM(dateStr, hour24, minute, VENUE_TZ);
       const spanEnd = new Date(
         spanStart.getTime() + durationMinutes * 60 * 1000
       );
@@ -418,11 +448,9 @@ export async function GET(req: Request) {
         minRem.KIRTAN = 0;
       }
 
-      // Whole-jatha guard (final, single place)
-      // Now controlled by ENFORCE_WHOLE_JATHA so it becomes a *soft* preference.
+      // Whole-jatha guard (unchanged, still hour-based via spanHours)
       if (ok && ENFORCE_WHOLE_JATHA) {
         if (jathaAllThroughCount > 0) {
-          // Need full jatha available for ALL hours in the span
           for (const hh of spanHours) {
             const freeJ = countWholeFreeJathasAtHour(
               busyByHour[hh],
@@ -434,7 +462,6 @@ export async function GET(req: Request) {
             }
           }
         } else if (jathaAtEndCount > 0 && trailingMax > 0) {
-          // Need full jatha only in the trailing window
           const tStart = new Date(candEnd.getTime() - trailingMax * 60_000);
           const trailingHours = hourSpan(tStart, candEnd).filter((h) =>
             BUSINESS_HOURS_24.includes(h)
@@ -452,12 +479,11 @@ export async function GET(req: Request) {
         }
       }
 
-      // ✅ PUSH the candidate if it passed all checks
       if (ok) {
         if (minRem.PATH === Number.MAX_SAFE_INTEGER) minRem.PATH = 0;
         if (minRem.KIRTAN === Number.MAX_SAFE_INTEGER) minRem.KIRTAN = 0;
-        hours.push(hStart);
-        remainingByHour[hStart] = minRem;
+        hours.push(startMinutes);
+        remainingByHour[startMinutes] = minRem;
       }
     }
 
@@ -468,14 +494,16 @@ export async function GET(req: Request) {
     const needsHall =
       programs.some((p) => p.requiresHall) || locationType === 'GURDWARA';
 
-    for (const hStart of hours) {
-      const slotStart = zonedLocalToUtc(dateStr, hStart, VENUE_TZ);
+    for (const slotMinutes of hours) {
+      const hour24 = Math.floor(slotMinutes / 60);
+      const minute = slotMinutes % 60;
+      const slotStart = zonedLocalToUtcHM(dateStr, hour24, minute, VENUE_TZ);
       const slotEnd = new Date(
         slotStart.getTime() + durationMinutes * 60 * 1000
       );
 
       const req = required;
-      const rem = remainingByHour[hStart] ?? { PATH: 0, KIRTAN: 0 };
+      const rem = remainingByHour[slotMinutes] ?? { PATH: 0, KIRTAN: 0 };
       const hasStaff = isLongPath
         ? true
         : rem.PATH >= req.PATH && rem.KIRTAN >= req.KIRTAN;
@@ -501,16 +529,16 @@ export async function GET(req: Request) {
         }
       }
 
-      availableByHour[hStart] = hasStaff && hasHall;
-      hallByHour[hStart] = hallPick;
+      availableByHour[slotMinutes] = hasStaff && hasHall;
+      hallByHour[slotMinutes] = hallPick;
     }
 
     return NextResponse.json({
-      hours,
-      remainingByHour,
+      hours, // now minute slots: [420, 450, 480, ...]
+      remainingByHour, // keyed by minute
       required,
-      availableByHour,
-      hallByHour,
+      availableByHour, // keyed by minute
+      hallByHour, // keyed by minute
     });
   } catch (e: any) {
     return NextResponse.json(

@@ -28,17 +28,20 @@ type BookingEditFormProps = {
   programTypes: { id: string; name: string }[];
 };
 
-type HourOption = { value: string; label: string };
+type TimeOption = { value: string; label: string };
 
-// 7:00–20:00 in 1-hour steps
-const HOUR_OPTIONS: HourOption[] = (() => {
-  const out: HourOption[] = [];
+// 7:00–20:30 in 30-minute steps
+const TIME_OPTIONS: TimeOption[] = (() => {
+  const out: TimeOption[] = [];
   for (let h = 7; h <= 20; h++) {
-    const hour12 = ((h + 11) % 12) + 1; // 0->12, 13->1, etc.
-    const suffix = h < 12 ? 'AM' : 'PM';
-    const label = `${hour12}:00 ${suffix}`;
-    const value = `${String(h).padStart(2, '0')}:00`;
-    out.push({ value, label });
+    for (const m of [0, 30]) {
+      const hour12 = ((h + 11) % 12) + 1; // 0->12, 13->1, etc.
+      const suffix = h < 12 ? 'AM' : 'PM';
+      const minStr = m === 0 ? '00' : '30';
+      const label = `${hour12}:${minStr} ${suffix}`;
+      const value = `${String(h).padStart(2, '0')}:${minStr}`;
+      out.push({ value, label });
+    }
   }
   return out;
 })();
@@ -46,7 +49,14 @@ const HOUR_OPTIONS: HourOption[] = (() => {
 function toDateParts(iso: string) {
   const d = new Date(iso);
   const date = d.toISOString().slice(0, 10); // yyyy-mm-dd
-  const time = `${String(d.getHours()).padStart(2, '0')}:00`; // hour-only
+
+  // keep minutes, but snap to 0 or 30 just in case
+  const mins = d.getMinutes();
+  const snapped = mins >= 30 ? 30 : 0;
+  const time = `${String(d.getHours()).padStart(2, '0')}:${snapped
+    .toString()
+    .padStart(2, '0')}`;
+
   return { date, time };
 }
 
@@ -213,7 +223,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 }}
               />
               <label className='block text-xs text-gray-500 mt-2 mb-1'>
-                Start time (hour only)
+                Start time
               </label>
               <select
                 className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
@@ -224,7 +234,7 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                   autoAdjustEnd(startDate, v);
                 }}
               >
-                {HOUR_OPTIONS.map((opt) => (
+                {TIME_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -243,14 +253,14 @@ const BookingEditForm: React.FC<BookingEditFormProps> = ({
                 onChange={(e) => setEndDate(e.target.value)}
               />
               <label className='block text-xs text-gray-500 mt-2 mb-1'>
-                End time (hour only)
+                End time
               </label>
               <select
                 className='block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500'
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
               >
-                {HOUR_OPTIONS.map((opt) => (
+                {TIME_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>

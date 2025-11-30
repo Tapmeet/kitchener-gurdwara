@@ -85,40 +85,63 @@ function msg(key: FieldKey, fallback?: string) {
 function todayLocalDateString() {
   return toLocalDateString(new Date());
 }
-function minSelectableHour24(dateStr: string): number {
-  const base = 7;
-  if (dateStr !== todayLocalDateString()) return base;
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  const nextHour = h + (m > 0 ? 1 : 0);
-  return Math.max(base, nextHour);
-}
 function toLocalDateString(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-function toISOFromLocalDateHour(dateStr: string, hour24: number) {
+
+// minutes-from-midnight helpers (half-hour slots)
+function minSelectableMinutes(dateStr: string): number {
+  const base = 7 * 60; // 7:00
+  if (dateStr !== todayLocalDateString()) return base;
+
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  let candidate = Math.max(base, nowMinutes);
+  const remainder = candidate % 30;
+  if (remainder > 0) candidate += 30 - remainder; // round up to next :00 / :30
+
+  return candidate;
+}
+
+function toISOFromLocalDateMinutes(dateStr: string, minutes: number) {
   const [y, m, d] = dateStr.split('-').map(Number);
-  const local = new Date(y, (m ?? 1) - 1, d ?? 1, hour24, 0, 0, 0);
+  const h = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  const local = new Date(y, (m ?? 1) - 1, d ?? 1, h, mm, 0, 0);
   return local.toISOString();
 }
-function to12(h24: number): { h12: number; ap: 'AM' | 'PM' } {
+
+function formatTimeLabelFromMinutes(minutes: number) {
+  const h24 = Math.floor(minutes / 60);
+  const mm = minutes % 60;
   const ap: 'AM' | 'PM' = h24 < 12 ? 'AM' : 'PM';
-  const h = h24 % 12;
-  return { h12: h === 0 ? 12 : h, ap };
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  const mmStr = String(mm).padStart(2, '0');
+  return `${h12}:${mmStr} ${ap}`;
 }
+
 const MS_PER_MIN = 60_000;
 const MS_PER_DAY = 86_400_000;
 
 function computeEndPreview(
   dateStr: string,
-  startHour24: number,
+  startMinutes: number,
   durationMinutes: number
 ) {
-  if (!durationMinutes || !dateStr) return null; // guard until date is mounted
+  if (!durationMinutes || !dateStr) return null;
   const [y, m, d] = dateStr.split('-').map(Number);
-  const start = new Date(y, (m ?? 1) - 1, d ?? 1, startHour24, 0, 0, 0); // local time
+  const start = new Date(
+    y,
+    (m ?? 1) - 1,
+    d ?? 1,
+    Math.floor(startMinutes / 60),
+    startMinutes % 60,
+    0,
+    0
+  );
   const end = new Date(start.getTime() + durationMinutes * MS_PER_MIN);
 
   const isSameDay =
@@ -151,7 +174,14 @@ function computeEndPreview(
   return `Ends ${prep} ${endDate} ${endTime}${spanText}`;
 }
 
-const BUSINESS_HOURS_24 = Array.from({ length: 13 }, (_, i) => i + 7);
+const BUSINESS_SLOTS_MINUTES = (() => {
+  const out: number[] = [];
+  for (let h = 7; h <= 19; h++) {
+    out.push(h * 60); // :00
+    out.push(h * 60 + 30); // :30
+  }
+  return out;
+})();
 
 /* ---------- Turnstile (optional, progressive) ---------- */
 declare global {
@@ -198,12 +228,12 @@ export default function BookingForm() {
 
   // Date + time (set after mount to avoid SSR/CSR clock differences)
   const [date, setDate] = useState<string>(''); // empty on SSR & first client render
-  const [startHour24, setStartHour24] = useState<number>(7);
+  const [startMinutes, setStartMinutes] = useState<number>(7 * 60);
   useEffect(() => {
     const n = new Date();
-    setDate(toLocalDateString(n));
-    const h = n.getHours();
-    setStartHour24(h < 7 || h > 19 ? 7 : h);
+    const today = toLocalDateString(n);
+    setDate(today);
+    setStartMinutes(minSelectableMinutes(today));
   }, []);
 
   // Program: SINGLE-SELECT
@@ -229,7 +259,7 @@ export default function BookingForm() {
   const [attendees, setAttendees] = useState<string>('');
 
   // Availability payload from server
-  const [availableHours, setAvailableHours] = useState<number[]>([]);
+  const [availableSlots, setAvailableSlots] = useState<number[]>([]);
   const [availableMap, setAvailableMap] = useState<Record<number, boolean>>({});
   const [isLoadingAvail, setIsLoadingAvail] = useState(false);
 
@@ -244,8 +274,8 @@ export default function BookingForm() {
 
   // End-time preview
   const endLabel = useMemo(() => {
-    return computeEndPreview(date, startHour24, durationMinutes);
-  }, [date, startHour24, durationMinutes]);
+    return computeEndPreview(date, startMinutes, durationMinutes);
+  }, [date, startMinutes, durationMinutes]);
 
   const selectedProgramKey = selectedProgramId || '';
 
@@ -260,7 +290,7 @@ export default function BookingForm() {
   // Fetch availability (server computes hall feasibility too)
   useEffect(() => {
     if (!selectedProgramKey || !locationType || !date) {
-      setAvailableHours([]);
+      setAvailableSlots([]);
       setAvailableMap({});
       setIsLoadingAvail(false);
       return;
@@ -278,18 +308,18 @@ export default function BookingForm() {
 
     setIsLoadingAvail(true);
     setAvailableMap({});
-    setAvailableHours([]);
+    setAvailableSlots([]);
 
     fetch(url)
       .then((r) => r.json())
       .then((j) => {
         if (aborted) return;
-        setAvailableHours(Array.isArray(j.hours) ? j.hours : []);
+        setAvailableSlots(Array.isArray(j.hours) ? j.hours : []);
         setAvailableMap(j.availableByHour || {});
       })
       .catch(() => {
         if (aborted) return;
-        setAvailableHours([]);
+        setAvailableSlots([]);
         setAvailableMap({});
       })
       .finally(() => {
@@ -303,32 +333,32 @@ export default function BookingForm() {
 
   // Keep selected start hour valid
   useEffect(() => {
-    const minHour = minSelectableHour24(date);
-    const allList = BUSINESS_HOURS_24.filter((h) => h >= minHour);
-    const allowed = allList.filter((h) => availableMap[h]);
-    if (allowed.length && !availableMap[startHour24]) {
-      setStartHour24(allowed[0]);
+    const minMin = minSelectableMinutes(date);
+    const allList = BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
+    const allowed = allList.filter((m) => availableMap[m]);
+    if (allowed.length && !availableMap[startMinutes]) {
+      setStartMinutes(allowed[0]);
     }
-  }, [availableMap, date, startHour24]);
+  }, [availableMap, date, startMinutes]);
 
   // Count how many selectable times exist
   const allowedTimesCount = useMemo(() => {
-    const minHour = minSelectableHour24(date);
-    const list = BUSINESS_HOURS_24.filter((h) => h >= minHour);
+    const minMin = minSelectableMinutes(date);
+    const list = BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
     return list.filter(
-      (h24) =>
-        availableMap[h24] === true ||
-        (availableHours.length > 0 && availableHours.includes(h24))
+      (mins) =>
+        availableMap[mins] === true ||
+        (availableSlots.length > 0 && availableSlots.includes(mins))
     ).length;
-  }, [date, availableMap, availableHours]);
+  }, [date, availableMap, availableSlots]);
 
   // Disable submit unless we have a valid slot (and not still loading)
   const canSubmit =
     !!selectedProgramId &&
     !!locationType &&
     !isLoadingAvail &&
-    (availableMap[startHour24] === true ||
-      (availableHours.length > 0 && availableHours.includes(startHour24)));
+    (availableMap[startMinutes] === true ||
+      (availableSlots.length > 0 && availableSlots.includes(startMinutes)));
 
   /* ---- Specific refs per field ---- */
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -414,22 +444,22 @@ export default function BookingForm() {
     setSuccess(null);
     setLocationType('');
     setDate('');
-    setStartHour24(7);
+    setStartMinutes(7 * 60);
     setPhone('');
     setContactName('');
     setContactEmail('');
     editedRef.current = { name: false, email: false, phone: false };
     setSelectedProgramId('');
-    setAvailableHours([]);
+    setAvailableSlots([]);
     setAvailableMap({});
     setAttendees('');
     if (form) form.reset();
     // set date/time again after reset on mount tick
     setTimeout(() => {
       const n = new Date();
-      setDate(toLocalDateString(n));
-      const h = n.getHours();
-      setStartHour24(h < 7 || h > 19 ? 7 : h);
+      const today = toLocalDateString(n);
+      setDate(today);
+      setStartMinutes(minSelectableMinutes(today));
     }, 0);
   }
 
@@ -458,13 +488,13 @@ export default function BookingForm() {
     }
 
     // Block submission if the chosen hour is unavailable
-    const minHour = minSelectableHour24(date);
-    const isPast = date === todayLocalDateString() && startHour24 < minHour;
+    const minMin = minSelectableMinutes(date);
+    const isPast = date === todayLocalDateString() && startMinutes < minMin;
     const slotKnown =
-      Object.keys(availableMap).length > 0 || availableHours.length > 0;
+      Object.keys(availableMap).length > 0 || availableSlots.length > 0;
     const slotAvailable =
-      availableMap[startHour24] === true ||
-      (availableHours.length > 0 && availableHours.includes(startHour24));
+      availableMap[startMinutes] === true ||
+      (availableSlots.length > 0 && availableSlots.includes(startMinutes));
 
     if (!date) {
       nextErrors.date = FRIENDLY.date;
@@ -475,7 +505,7 @@ export default function BookingForm() {
       nextErrors.startHour24 = 'That time is unavailable. Please pick another.';
     }
 
-    const startISO = toISOFromLocalDateHour(date, startHour24);
+    const startISO = toISOFromLocalDateMinutes(date, startMinutes);
     const endISO = new Date(
       new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
     ).toISOString();
@@ -839,9 +869,9 @@ export default function BookingForm() {
                   ref={startHour24Ref}
                   id='startHour24'
                   className={`select ${errors.startHour24 ? invalidCls : ''}`}
-                  value={isLoadingAvail ? ('' as any) : startHour24}
+                  value={isLoadingAvail ? ('' as any) : startMinutes}
                   onChange={(e) => {
-                    setStartHour24(Number(e.target.value));
+                    setStartMinutes(Number(e.target.value));
                     clearFieldError('startHour24');
                   }}
                   disabled={
@@ -862,9 +892,9 @@ export default function BookingForm() {
                     </option>
                   ) : (
                     (() => {
-                      const minHour = minSelectableHour24(date);
-                      const list = BUSINESS_HOURS_24.filter(
-                        (h) => h >= minHour
+                      const minMin = minSelectableMinutes(date);
+                      const list = BUSINESS_SLOTS_MINUTES.filter(
+                        (m) => m >= minMin
                       );
 
                       if (list.length === 0) {
@@ -875,15 +905,18 @@ export default function BookingForm() {
                         );
                       }
 
-                      return list.map((h24) => {
-                        const { h12, ap } = to12(h24);
+                      return list.map((mins) => {
                         const isAvailable =
-                          availableMap[h24] === true ||
-                          (availableHours.length > 0 &&
-                            availableHours.includes(h24));
-                        const label = `${h12}:00 ${ap}${isAvailable ? '' : ' — unavailable'}`;
+                          availableMap[mins] === true ||
+                          (availableSlots.length > 0 &&
+                            availableSlots.includes(mins));
+                        const label = `${formatTimeLabelFromMinutes(mins)}${isAvailable ? '' : ' — unavailable'}`;
                         return (
-                          <option key={h24} value={h24} disabled={!isAvailable}>
+                          <option
+                            key={mins}
+                            value={mins}
+                            disabled={!isAvailable}
+                          >
                             {label}
                           </option>
                         );
