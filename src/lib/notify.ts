@@ -385,6 +385,7 @@ export function renderBookingEmailCustomerConfirmed(p: {
       : '';
 
   return `
+    <p><strong>KW Gurdwara&nbsp;GTSA</strong></p>
     <p>Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.</p>
     <h2>Your booking has been confirmed</h2>
 
@@ -426,6 +427,7 @@ export function renderBookingTextConfirmed(p: {
       : '';
 
   return (
+    `KW Gurdwara GTSA\n` +
     `Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh.\n` +
     `Your booking is confirmed: ${p.title}\n` +
     `${p.date} ${p.startLocal}-${p.endLocal}\n` +

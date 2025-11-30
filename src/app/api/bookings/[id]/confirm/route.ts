@@ -181,7 +181,7 @@ export async function POST(
         customerEmail
           ? sendEmail({
               to: customerEmail,
-              subject: `Booking confirmed – ${updated.title}`,
+              subject: `Booking confirmed – ${updated.title} – KW Gurdwara GTSA`,
               html: customerHtml,
             })
           : Promise.resolve(),
