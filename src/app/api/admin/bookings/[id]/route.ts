@@ -288,6 +288,25 @@ export async function PATCH(
         );
       }
     }
+    // 4b) If only the time changed (same programs) for a PENDING booking,
+    // re-run auto-assign so PROPOSED staff match the new time window.
+    else if (deltaMs !== 0 && updated.status === 'PENDING') {
+      try {
+        const res = await autoAssignForBooking(id);
+        console.log(
+          '[admin bookings PATCH] Re-auto-assigned after time change',
+          {
+            bookingId: id,
+            createdCount: res?.created?.length ?? 0,
+          }
+        );
+      } catch (e) {
+        console.error(
+          '[admin bookings PATCH] autoAssignForBooking failed after time change',
+          e
+        );
+      }
+    }
 
     // 5) Notify customer about change (prod only)
     if (shouldSendBookingNotifications && updated.contactEmail) {

@@ -1,3 +1,4 @@
+// src/components/admin/BookingTimeEditor.tsx
 'use client';
 
 import { useState, useTransition } from 'react';
@@ -36,41 +37,104 @@ export default function BookingTimeEditor({
   initialEnd,
 }: Props) {
   const router = useRouter();
+
+  // 👉 Base duration derived from the original booking (program type / block hours)
+  const baseStart =
+    initialStart instanceof Date ? initialStart : new Date(initialStart);
+  const baseEnd =
+    initialEnd instanceof Date ? initialEnd : new Date(initialEnd);
+
+  const rawDurationMs = baseEnd.getTime() - baseStart.getTime();
+  // minimum 1 hour to avoid weird zero/negative durations
+  const BASE_DURATION_MS = Math.max(rawDurationMs, 60 * 60 * 1000);
+
   const startParts = toDateHourParts(initialStart);
   const endParts = toDateHourParts(initialEnd);
 
-  const [startDate, setStartDate] = useState(startParts.date);
-  const [startHour, setStartHour] = useState(startParts.hour);
-  const [endDate, setEndDate] = useState(endParts.date);
-  const [endHour, setEndHour] = useState(endParts.hour);
+  const [startDate, setStartDate] = useState<string>(startParts.date);
+  const [startHour, setStartHour] = useState<string>(startParts.hour);
+  const [endDate, setEndDate] = useState<string>(endParts.date);
+  const [endHour, setEndHour] = useState<string>(endParts.hour);
 
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
+  // Tracks if admin has manually edited the end fields
+  const [endTouched, setEndTouched] = useState(false);
+
+  const recomputeEndFrom = (dateStr: string, hourStr: string) => {
+    if (!BASE_DURATION_MS) return;
+    const start = new Date(`${dateStr}T${hourStr}:00`);
+    if (isNaN(start.getTime())) return;
+
+    const end = new Date(start.getTime() + BASE_DURATION_MS);
+    const parts = toDateHourParts(end);
+    setEndDate(parts.date);
+    setEndHour(parts.hour);
+  };
+
+  const handleStartDateChange = (value: string) => {
+    setStartDate(value);
+    setError(null);
+    setOkMsg(null);
+
+    // If admin hasn't manually touched End, auto-suggest based on program duration
+    if (!endTouched) {
+      recomputeEndFrom(value, startHour);
+    }
+  };
+
+  const handleStartHourChange = (value: string) => {
+    setStartHour(value);
+    setError(null);
+    setOkMsg(null);
+
+    if (!endTouched) {
+      recomputeEndFrom(startDate, value);
+    }
+  };
+
+  const handleEndDateChange = (value: string) => {
+    setEndDate(value);
+    setEndTouched(true);
+    setError(null);
+    setOkMsg(null);
+  };
+
+  const handleEndHourChange = (value: string) => {
+    setEndHour(value);
+    setEndTouched(true);
+    setError(null);
+    setOkMsg(null);
+  };
+
   const onUpdate = () => {
     setError(null);
     setOkMsg(null);
 
-    // Build real Date objects and send ISO strings (UTC)
+    // Build real Date objects and send ISO strings
     const startIso = new Date(`${startDate}T${startHour}:00`).toISOString();
     const endIso = new Date(`${endDate}T${endHour}:00`).toISOString();
 
-    startTransition(async () => {
-      const res = await fetch(`/api/admin/bookings/${bookingId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start: startIso, end: endIso }),
-      });
+    startTransition(() => {
+      (async () => {
+        const res = await fetch(`/api/admin/bookings/${bookingId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ start: startIso, end: endIso }),
+        });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || 'Failed to update booking time.');
-        return;
-      }
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          setError(data?.error || 'Failed to update booking time.');
+          return;
+        }
 
-      setOkMsg('Time updated.');
-      router.refresh();
+        setOkMsg('Time updated.');
+        // Make Admin · Bookings + ReviewProposed refetch and show new assignments
+        router.refresh();
+      })();
     });
   };
 
@@ -87,7 +151,7 @@ export default function BookingTimeEditor({
           <input
             type='date'
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => handleStartDateChange(e.target.value)}
             className='rounded border px-2 py-1 text-xs'
           />
         </div>
@@ -98,7 +162,7 @@ export default function BookingTimeEditor({
           </div>
           <select
             value={startHour}
-            onChange={(e) => setStartHour(e.target.value)}
+            onChange={(e) => handleStartHourChange(e.target.value)}
             className='rounded border px-2 py-1 text-xs'
           >
             {BUSINESS_HOURS_24.map((h) => (
@@ -117,7 +181,7 @@ export default function BookingTimeEditor({
           <input
             type='date'
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => handleEndDateChange(e.target.value)}
             className='rounded border px-2 py-1 text-xs'
           />
         </div>
@@ -128,7 +192,7 @@ export default function BookingTimeEditor({
           </div>
           <select
             value={endHour}
-            onChange={(e) => setEndHour(e.target.value)}
+            onChange={(e) => handleEndHourChange(e.target.value)}
             className='rounded border px-2 py-1 text-xs'
           >
             {BUSINESS_HOURS_24.map((h) => (
@@ -150,9 +214,9 @@ export default function BookingTimeEditor({
         </button>
       </div>
 
-      {error && <div className='text-[11px] text-red-600 mt-1'>{error}</div>}
+      {error && <div className='mt-1 text-[11px] text-red-600'>{error}</div>}
       {okMsg && !error && (
-        <div className='text-[11px] text-green-600 mt-1'>{okMsg}</div>
+        <div className='mt-1 text-[11px] text-green-600'>{okMsg}</div>
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import ReviewProposed from '@/components/admin/ReviewProposed';
 import BookingTimeEditor from '@/components/admin/BookingTimeEditor';
 import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 import type { Prisma } from '@/generated/prisma/client';
+import { JATHA_SIZE } from '@/lib/jatha';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -32,7 +33,7 @@ export default async function AdminBookingsPage({
     );
   }
 
-  // ⬇️ NEW: resolve the async searchParams once
+  // resolve async searchParams once
   const params = await searchParams;
 
   const getParam = (key: string): string | undefined => {
@@ -172,6 +173,66 @@ export default async function AdminBookingsPage({
 
   const statusOptions = ['ALL', 'PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED'];
 
+  // 🔴 Derive shortages for each pending booking based on existing PROPOSED assignments
+  const shortageLinesByBooking = new Map<string, string[]>();
+
+  for (const b of pending) {
+    const lines: string[] = [];
+
+    for (const item of b.items) {
+      const pt = item.programType;
+      const itemAssignments = b.assignments.filter(
+        (a) => a.bookingItemId === item.id
+      );
+
+      const pathStaff = new Set<string>();
+      const kirtanStaff = new Set<string>();
+
+      for (const a of itemAssignments) {
+        const skills = a.staff?.skills ?? [];
+        if (skills.includes('PATH')) pathStaff.add(a.staffId);
+        if (skills.includes('KIRTAN')) kirtanStaff.add(a.staffId);
+      }
+
+      const minP = Math.max(0, pt.minPathers ?? 0);
+      const minK = Math.max(0, pt.minKirtanis ?? 0);
+      const tk = Math.max(0, pt.trailingKirtanMinutes ?? 0);
+
+      const itemMessages: string[] = [];
+
+      // PATH shortages (generic)
+      if (minP > 0 && pathStaff.size < minP) {
+        const needed = minP - pathStaff.size;
+        itemMessages.push(`Pathis missing ${needed}`);
+      }
+
+      // KIRTAN shortages (generic)
+      if (tk > 0) {
+        // Any program with trailing Kirtan: require a full jatha
+        const requiredK = JATHA_SIZE;
+        if (kirtanStaff.size < requiredK) {
+          const needed = requiredK - kirtanStaff.size;
+          itemMessages.push(`Kirtan sevadars missing ${needed}`);
+        }
+      } else if (minK > 0) {
+        // Full-window Kirtan programs: use minKirtanis
+        const requiredK = minK;
+        if (kirtanStaff.size < requiredK) {
+          const needed = requiredK - kirtanStaff.size;
+          itemMessages.push(`Kirtan sevadars missing ${needed}`);
+        }
+      }
+
+      if (itemMessages.length) {
+        lines.push(`${pt.name}: ${itemMessages.join('; ')}`);
+      }
+    }
+
+    if (lines.length) {
+      shortageLinesByBooking.set(b.id, lines);
+    }
+  }
+
   return (
     <div className='p-6 space-y-8'>
       <h1 className='text-lg font-semibold'>Admin · Bookings</h1>
@@ -201,6 +262,8 @@ export default async function AdminBookingsPage({
                     ? `Outside — ${b.address}`
                     : 'Outside';
 
+              const shortageLines = shortageLinesByBooking.get(b.id) ?? [];
+
               return (
                 <div
                   key={b.id}
@@ -226,6 +289,24 @@ export default async function AdminBookingsPage({
                       </div>
                     ) : null}
 
+                    {/* 🔴 Show shortages for this booking, if any */}
+                    {shortageLines.length > 0 && (
+                      <div className='mt-2 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-800'>
+                        <div className='font-semibold text-red-900'>
+                          Not enough staff assigned for this booking.
+                        </div>
+                        <ul className='mt-1 list-disc pl-4'>
+                          {shortageLines.map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                        <div className='mt-1 text-[11px] text-red-900/80'>
+                          Try adjusting the time or manage assignments manually
+                          before approving this booking.
+                        </div>
+                      </div>
+                    )}
+
                     {/* Adjust time for pending bookings */}
                     <div className='mt-3'>
                       <BookingTimeEditor
@@ -237,7 +318,11 @@ export default async function AdminBookingsPage({
 
                     {/* Proposed assignment review UI */}
                     <div className='mt-3'>
-                      <ReviewProposed bookingId={b.id} showApprove={false} />
+                      <ReviewProposed
+                        key={`${b.id}:${b.start.toISOString()}:${b.end.toISOString()}`}
+                        bookingId={b.id}
+                        showApprove={false}
+                      />
                     </div>
                   </div>
 
