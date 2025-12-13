@@ -380,6 +380,44 @@ async function main() {
     compWeight: 5,
   });
 
+  /* Sehaj Path – flexible multi-day, but staffing only at start / end */
+
+  // Sehaj Path (Path only – 2 pathis at start, 2 at the very end)
+  await upsertProgram('Sehaj Path', ProgramCategory.PATH, {
+    // This is just a *typical* duration to drive availability.
+    // Actual start/end will come from the booking times.
+    durationMinutes: 48 * 60, // 2 days placeholder
+    peopleRequired: 2, // max concurrent heads (2 pathis at those windows)
+    minPathers: 1, // capacity checks use this; actual pattern is handled in auto-assign
+    minKirtanis: 0,
+    trailingKirtanMinutes: 0,
+    pathRotationMinutes: 0,
+    pathClosingDoubleMinutes: 0,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    compWeight: 4,
+  });
+
+  // Sehaj Path + Kirtan
+  //  - Start: 2 PATH in the first hour
+  //  - Second-last hour: 2 PATH
+  //  - Last hour: 3 KIRTAN (jatha if possible)
+  await upsertProgram('Sehaj Path + Kirtan', ProgramCategory.PATH, {
+    // Again, this is a "typical" multi-day duration for availability.
+    durationMinutes: 49 * 60, // 48h path + 1h kirtan tail (placeholder)
+    peopleRequired: 3, // max concurrent heads at any moment
+    minPathers: 1,
+    // Important: keep minKirtanis = 0 so it's treated as pure PATH for the
+    // "no Kirtan in multi-day window" guard; trailingKirtanMinutes drives Kirtan capacity.
+    minKirtanis: 0,
+    trailingKirtanMinutes: 60, // 1h Kirtan at the end
+    pathRotationMinutes: 0, // no hourly rotations, we do custom windows
+    pathClosingDoubleMinutes: 0,
+    requiresHall: false,
+    canBeOutsideGurdwara: true,
+    compWeight: 5,
+  });
+
   console.log('✅ Seed completed');
 }
 

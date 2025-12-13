@@ -19,11 +19,122 @@ import { add, reqFromProgram, RoleVector, ROLES } from '@/lib/roles';
 import { getMaxPerLocationPerRole, getTotalPoolPerRole } from '@/lib/pools';
 import { getTotalUniqueStaffCount } from '@/lib/headcount';
 import { getJathaGroups, JATHA_SIZE } from '@/lib/jatha';
-import { pickFirstFittingHall } from '@/lib/halls';
+import {
+  pickFirstFittingHall,
+  isHallFreeForWindows,
+  type TimeWindow,
+} from '@/lib/halls';
 import { ProgramCategory } from '@/generated/prisma/client';
 
 const OUTSIDE_BUFFER_MS = 15 * 60 * 1000;
 const ENFORCE_WHOLE_JATHA = process.env.ENFORCE_WHOLE_JATHA === '1';
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function isSehajName(name: string | null | undefined) {
+  return (name ?? '').toLowerCase().startsWith('sehaj path');
+}
+
+/**
+ * Sehaj hall windows:
+ * - Always: first 60 minutes
+ * - Sehaj Path: last 60 minutes
+ * - Sehaj Path + Kirtan: last 120 minutes (merged)
+ */
+function hallWindowsForSehaj(
+  start: Date,
+  end: Date,
+  withKirtan: boolean
+): TimeWindow[] {
+  if (end <= start) return [];
+
+  const firstEnd = new Date(Math.min(start.getTime() + HOUR_MS, end.getTime()));
+  const windows: TimeWindow[] = [{ start, end: firstEnd }];
+
+  const durMs = end.getTime() - start.getTime();
+  if (durMs <= HOUR_MS) return windows;
+
+  const endMinutes = withKirtan ? 2 * HOUR_MS : HOUR_MS;
+  const endStart = new Date(
+    Math.max(start.getTime(), end.getTime() - endMinutes)
+  );
+  if (endStart < end) windows.push({ start: endStart, end });
+
+  return windows;
+}
+
+function hallWindowsForProgramNames(
+  programNames: string[],
+  start: Date,
+  end: Date
+): TimeWindow[] {
+  const names = (programNames ?? []).map((n) => String(n ?? ''));
+  const hasSehaj = names.some((n) => isSehajName(n));
+  if (!hasSehaj) return [{ start, end }];
+  const mixed = names.some((n) => !isSehajName(n));
+  if (mixed) return [{ start, end }];
+  const withKirtan = names.some((n) => n.toLowerCase().includes('kirtan'));
+  return hallWindowsForSehaj(start, end, withKirtan);
+}
+
+/** Convert TimeWindow[] into business-hour buckets (union) */
+function hoursForWindows(
+  windows: TimeWindow[],
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA',
+  outsideBufferMs: number
+): number[] {
+  const set = new Set<number>();
+
+  for (const w of windows) {
+    if (!w || w.end <= w.start) continue;
+
+    const s =
+      locationType === 'OUTSIDE_GURDWARA'
+        ? new Date(w.start.getTime() - outsideBufferMs)
+        : w.start;
+
+    const e =
+      locationType === 'OUTSIDE_GURDWARA'
+        ? new Date(w.end.getTime() + outsideBufferMs)
+        : w.end;
+
+    for (const h of hourSpan(s, e)) {
+      if (BUSINESS_HOURS_24.includes(h)) set.add(h);
+    }
+  }
+
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/** Tight range used to query overlaps when we only care about Sehaj windows */
+function rangeForWindows(
+  windows: TimeWindow[],
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA',
+  outsideBufferMs: number
+) {
+  let min = Infinity;
+  let max = -Infinity;
+
+  for (const w of windows) {
+    if (!w || w.end <= w.start) continue;
+
+    const s =
+      locationType === 'OUTSIDE_GURDWARA'
+        ? w.start.getTime() - outsideBufferMs
+        : w.start.getTime();
+
+    const e =
+      locationType === 'OUTSIDE_GURDWARA'
+        ? w.end.getTime() + outsideBufferMs
+        : w.end.getTime();
+
+    if (s < min) min = s;
+    if (e > max) max = e;
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return { start: new Date(min), end: new Date(max) };
+}
 
 function isBusinessStartHourTZ(d: Date) {
   const hourStr = new Intl.DateTimeFormat('en-CA', {
@@ -135,16 +246,8 @@ export async function GET(
   return NextResponse.json(payload);
 }
 
-/* ------------------------ PATCH (new) ------------------------ */
-/**
- * Admin-only: change start/end time of an existing booking, while:
- * - re-running business-hours guard
- * - enforcing long-path + Kirtan rule
- * - enforcing trailing-Kirtan jatha guard
- * - enforcing staff pool + per-location caps
- * - enforcing total headcount
- * - avoiding hall clashes
- */
+/* ------------------------ PATCH (fixed for Sehaj windows) ------------------------ */
+
 export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
@@ -178,6 +281,13 @@ export async function PATCH(
     const start = new Date(startStr);
     const end = new Date(endStr ?? startStr);
 
+    if (end <= start) {
+      return NextResponse.json(
+        { error: 'End time must be after the start time.' },
+        { status: 400 }
+      );
+    }
+
     // --- Load booking + programs ---
     const booking = await prisma.booking.findUnique({
       where: { id },
@@ -199,7 +309,17 @@ export async function PATCH(
       );
     }
 
-    // --- Required roles + headcount (same as POST /api/bookings) ---
+    const programNames = programs.map((p: any) => String(p?.name ?? ''));
+    const hasSehaj = programNames.some((n) => isSehajName(n));
+    const mixed = hasSehaj && programNames.some((n) => !isSehajName(n));
+    const isSehajOnly = hasSehaj && !mixed;
+
+    // Sehaj windows for this *new* start/end (or full window if not Sehaj-only)
+    const sehajWindows = isSehajOnly
+      ? hallWindowsForProgramNames(programNames, start, end)
+      : null;
+
+    // --- Required roles + headcount ---
     const required: RoleVector = programs.reduce(
       (acc, p) => add(acc, reqFromProgram(p as any)),
       { PATH: 0, KIRTAN: 0 }
@@ -223,16 +343,30 @@ export async function PATCH(
       })
       .reduce((a, b) => a + b, 0);
 
-    const durationMinutes = Math.max(
-      ...programs.map((p) => p.durationMinutes || 0)
+    // Use actual new booking window for "long" determination
+    const bookingDurationMinutes = Math.max(
+      1,
+      Math.round((end.getTime() - start.getTime()) / 60_000)
     );
-    const durationHours = Math.max(1, Math.ceil(durationMinutes / 60));
+    const durationHours = Math.max(1, Math.ceil(bookingDurationMinutes / 60));
     const isLong = durationHours >= 36;
     const isPurePath = required.KIRTAN === 0;
-    const isLongPath = isLong && isPurePath;
+
+    // Akhand-style long path = long + pure path, but NOT Sehaj-only
+    const isLongPath = isLong && isPurePath && !isSehajOnly;
 
     // --- Business-hours guard ---
-    if (!isLongPath) {
+    if (isSehajOnly) {
+      for (const w of sehajWindows ?? []) {
+        const bh = isWithinBusinessHours(w.start, w.end, VENUE_TZ);
+        if (!bh.ok) {
+          return NextResponse.json(
+            { error: bh.error ?? 'Outside business hours' },
+            { status: 400 }
+          );
+        }
+      }
+    } else if (!isLongPath) {
       const bh = isWithinBusinessHours(start, end, VENUE_TZ);
       if (!bh.ok) {
         return NextResponse.json(
@@ -249,8 +383,8 @@ export async function PATCH(
       }
     }
 
-    // Long + Kirtan not allowed
-    if (isLong && !isPurePath) {
+    // Long + Kirtan not allowed (but allow Sehaj Path + Kirtan)
+    if (isLong && !isPurePath && !isSehajOnly) {
       return NextResponse.json(
         {
           error:
@@ -294,6 +428,7 @@ export async function PATCH(
         const eRaw = a.end ?? a.booking.end;
         const s = new Date(sRaw);
         const e = new Date(eRaw);
+
         const paddedStart =
           a.booking.locationType === 'OUTSIDE_GURDWARA'
             ? new Date(s.getTime() - OUTSIDE_BUFFER_MS)
@@ -302,6 +437,7 @@ export async function PATCH(
           a.booking.locationType === 'OUTSIDE_GURDWARA'
             ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
             : e;
+
         const hrs = hourSpan(paddedStart, paddedEnd).filter((h) =>
           BUSINESS_HOURS_24.includes(h)
         );
@@ -338,21 +474,16 @@ export async function PATCH(
       }
     }
 
-    // --- Hall availability for new time ---
+    // --- Hall availability for new time (Sehaj uses windows) ---
     let hallId = booking.hallId;
 
-    if (booking.locationType === 'GURDWARA' && hallId) {
-      const clash = await prisma.booking.count({
-        where: {
-          id: { not: booking.id },
-          hallId,
-          start: { lt: end },
-          end: { gt: start },
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-      });
+    const hallWindows = hallWindowsForProgramNames(programNames, start, end);
 
-      if (clash > 0) {
+    if (booking.locationType === 'GURDWARA' && hallId) {
+      const free = await isHallFreeForWindows(hallId, hallWindows, {
+        ignoreBookingId: booking.id,
+      });
+      if (!free) {
         return NextResponse.json(
           {
             error:
@@ -369,7 +500,7 @@ export async function PATCH(
         typeof booking.attendees === 'number'
           ? Math.max(1, booking.attendees)
           : 1;
-      hallId = await pickFirstFittingHall(start, end, attendees);
+      hallId = await pickFirstFittingHall(start, end, attendees, hallWindows);
       if (!hallId) {
         return NextResponse.json(
           {
@@ -382,6 +513,9 @@ export async function PATCH(
     }
 
     // --- Capacity + headcount (excluding this booking itself) ---
+    const effectiveWindows =
+      isSehajOnly && sehajWindows?.length ? sehajWindows : [{ start, end }];
+
     const candStart =
       booking.locationType === 'OUTSIDE_GURDWARA'
         ? new Date(start.getTime() - OUTSIDE_BUFFER_MS)
@@ -391,9 +525,24 @@ export async function PATCH(
         ? new Date(end.getTime() + OUTSIDE_BUFFER_MS)
         : end;
 
-    const hours = hourSpan(candStart, candEnd).filter((h) =>
-      BUSINESS_HOURS_24.includes(h)
+    const queryRange =
+      isSehajOnly && sehajWindows?.length
+        ? rangeForWindows(
+            sehajWindows,
+            booking.locationType as any,
+            OUTSIDE_BUFFER_MS
+          )
+        : null;
+
+    const overlapStart = queryRange?.start ?? candStart;
+    const overlapEnd = queryRange?.end ?? candEnd;
+
+    const hours = hoursForWindows(
+      effectiveWindows,
+      booking.locationType as any,
+      OUTSIDE_BUFFER_MS
     );
+
     if (!hours.length) {
       return NextResponse.json(
         { error: 'Selected time is outside business hours.' },
@@ -405,8 +554,8 @@ export async function PATCH(
       const overlaps = await tx.booking.findMany({
         where: {
           id: { not: booking.id }, // exclude self
-          start: { lt: candEnd },
-          end: { gt: candStart },
+          start: { lt: overlapEnd },
+          end: { gt: overlapStart },
           status: { in: ['PENDING', 'CONFIRMED'] },
         },
         include: {
@@ -414,6 +563,7 @@ export async function PATCH(
             include: {
               programType: {
                 select: {
+                  name: true, // ✅ needed to detect Sehaj windows in overlaps
                   minPathers: true,
                   minKirtanis: true,
                   peopleRequired: true,
@@ -453,27 +603,25 @@ export async function PATCH(
               (pt.durationMinutes ?? 0) >= 36 * 60 &&
               (pt.minKirtanis ?? 0) === 0;
 
-            if (isLongPathItem) {
-              return Math.max(minSum, 1);
-            }
-
+            if (isLongPathItem) return Math.max(minSum, 1);
             return Math.max(pt.peopleRequired ?? 0, minSum);
           })
-          .reduce((a: number, b: number) => a + b, 0);
+          .reduce((a: number, bb: number) => a + bb, 0);
 
         const s = new Date(b.start);
         const e = new Date(b.end);
-        const paddedStart =
-          b.locationType === 'OUTSIDE_GURDWARA'
-            ? new Date(s.getTime() - OUTSIDE_BUFFER_MS)
-            : s;
-        const paddedEnd =
-          b.locationType === 'OUTSIDE_GURDWARA'
-            ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
-            : e;
-        const hrs = hourSpan(paddedStart, paddedEnd).filter((h) =>
-          BUSINESS_HOURS_24.includes(h)
+
+        const bNames = (b.items ?? []).map((it: any) =>
+          String(it.programType?.name ?? '')
         );
+        const bWindows = hallWindowsForProgramNames(bNames, s, e);
+
+        const hrs = hoursForWindows(
+          bWindows,
+          b.locationType as any,
+          OUTSIDE_BUFFER_MS
+        );
+
         for (const h of hrs) {
           if (b.locationType === 'GURDWARA') {
             usedGW[h].PATH += vec.PATH ?? 0;
@@ -497,10 +645,12 @@ export async function PATCH(
         if (!isLongPath) {
           for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
             const total = totalPool[r] ?? 0;
+
             const usedOpp =
               booking.locationType === 'GURDWARA'
                 ? (usedOUT[h][r] ?? 0)
                 : (usedGW[h][r] ?? 0);
+
             const usedHere =
               booking.locationType === 'GURDWARA'
                 ? (usedGW[h][r] ?? 0)
@@ -525,10 +675,12 @@ export async function PATCH(
             booking.locationType === 'GURDWARA'
               ? usedHeadGW[h]
               : usedHeadOUT[h];
+
           const remainingHead = Math.max(
             0,
             totalUniqueStaff - usedOppHead - usedHereHead
           );
+
           if (remainingHead < headcountRequired)
             throw new Error('CAPACITY_EXCEEDED');
         }

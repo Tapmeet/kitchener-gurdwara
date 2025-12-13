@@ -70,12 +70,23 @@ export default function CalendarView() {
       return;
     }
 
-    // Normal booking (existing behaviour)
+    // Normal booking (supports Sehaj split ids)
     try {
-      const res = await fetch(`/api/bookings/${arg.event.id}`);
+      const bookingId =
+        arg.event.extendedProps?.bookingId ??
+        String(arg.event.id).split(':')[0];
+
+      const res = await fetch(`/api/bookings/${bookingId}`);
+
       if (!res.ok) return;
+
       const data = await res.json();
-      setDetail(data);
+
+      // attach which segment was clicked (optional but useful)
+      const sehajSlot = arg.event.extendedProps?.sehajSlot ?? null;
+      const programNames = arg.event.extendedProps?.programNames ?? null;
+
+      setDetail({ ...data, sehajSlot, programNames });
       setDetailOpen(true);
     } catch {
       /* swallow */
@@ -418,9 +429,11 @@ export default function CalendarView() {
               }
 
               // (Keep your chips UI if you want on grid; you can remove chips if you prefer a cleaner month view)
-              const progs = (arg.event.extendedProps as any)?.programs as
+              const progs = ((arg.event.extendedProps as any)?.programs ??
+                (arg.event.extendedProps as any)?.programNames) as
                 | string[]
                 | undefined;
+
               const chips = (progs ?? []).slice(0, 3);
               const more = (progs?.length ?? 0) - chips.length;
 
@@ -736,6 +749,21 @@ export default function CalendarView() {
                       </div>
                     </div>
                   </div>
+
+                  {detail.sehajSlot && (
+                    <div>
+                      <div className='text-gray-500 mb-1'>Clicked segment</div>
+                      <div className='font-medium'>
+                        {detail.sehajSlot === 'start'
+                          ? 'Start'
+                          : detail.sehajSlot === 'endPath'
+                            ? 'Path (last hour)'
+                            : detail.sehajSlot === 'endKirtan'
+                              ? 'Kirtan (final hour)'
+                              : detail.sehajSlot}
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <div className='text-gray-500 mb-1'>Programs</div>

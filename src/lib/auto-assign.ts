@@ -165,7 +165,13 @@ export async function autoAssignForBooking(
   });
   if (!booking) throw new Error('Booking not found');
 
-  const thisBookingId = booking.id;
+  const safeBooking = booking;
+
+  if (!safeBooking.start || !safeBooking.end) {
+    throw new Error('Booking is missing start or end time');
+  }
+
+  const thisBookingId = safeBooking.id;
   const created: AssignResult['created'] = [];
   const shortages: AssignResult['shortages'] = [];
   let pickedJathaOverall: 'A' | 'B' | null = null;
@@ -193,10 +199,140 @@ export async function autoAssignForBooking(
       created.push({ staffId, bookingItemId: itemId });
   }
 
-  for (const item of booking.items) {
+  // --- Sehaj Path variants: first hour + closing windows only ---
+  async function assignSehajPathLike(item: any, withKirtan: boolean) {
+    const start = safeBooking.start;
+    const end = safeBooking.end;
+
+    if (!start || !end || end <= start) return;
+
+    const HOUR_MS = 60 * 60 * 1000;
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    const totalMs = endMs - startMs;
+
+    // We reuse one reserved set so the same person is not used in
+    // both the opening and closing windows for this booking item.
+    const reserved = new Set<string>();
+
+    // 1) First hour PATH (2 people)
+    const firstHourEnd = new Date(Math.min(endMs, startMs + HOUR_MS));
+    {
+      const { picked, shortage } = await pickPathersForWindow(
+        start,
+        firstHourEnd,
+        2,
+        reserved
+      );
+      if (shortage > 0) {
+        shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
+      }
+      if (picked.length) {
+        picked.forEach((id) => reserved.add(id));
+        await commit(item.id, picked, start, firstHourEnd);
+      }
+    }
+
+    // If the program is <= 1h, nothing else to schedule
+    if (totalMs <= HOUR_MS) {
+      return;
+    }
+
+    if (!withKirtan) {
+      // 2) Closing hour PATH (2 people) for Sehaj Path (no Kirtan)
+      const closingStart =
+        totalMs >= 2 * HOUR_MS ? new Date(endMs - HOUR_MS) : firstHourEnd;
+      const { picked, shortage } = await pickPathersForWindow(
+        closingStart,
+        end,
+        2,
+        reserved
+      );
+      if (shortage > 0) {
+        shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
+      }
+      if (picked.length) {
+        picked.forEach((id) => reserved.add(id));
+        await commit(item.id, picked, closingStart, end);
+      }
+      return;
+    }
+
+    // --- Sehaj Path + Kirtan ---
+    // We want:
+    //  - 2 PATH in the second-last hour
+    //  - 3 KIRTAN in the last hour (jatha if possible)
+
+    // Last hour is always the final [end-HOUR, end)
+    const lastHourStart =
+      totalMs >= HOUR_MS ? new Date(endMs - HOUR_MS) : firstHourEnd;
+
+    // Second-last PATH window is the hour before that (but never before start)
+    const secondLastStart =
+      totalMs >= 2 * HOUR_MS
+        ? new Date(Math.max(startMs, endMs - 2 * HOUR_MS))
+        : start;
+
+    // 2) PATH for second-last hour (2 people)
+    if (secondLastStart < lastHourStart) {
+      const { picked, shortage } = await pickPathersForWindow(
+        secondLastStart,
+        lastHourStart,
+        2,
+        reserved
+      );
+      if (shortage > 0) {
+        shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
+      }
+      if (picked.length) {
+        picked.forEach((id) => reserved.add(id));
+        await commit(item.id, picked, secondLastStart, lastHourStart);
+      }
+    }
+
+    // 3) KIRTAN jatha for closing hour
+    const { picks, shortage, jatha } = await pickKirtanisBestEffort(
+      lastHourStart,
+      end
+    );
+
+    if (picks.length) {
+      if (shortage > 0) {
+        shortages.push({
+          itemId: item.id,
+          role: 'KIRTAN',
+          needed: shortage,
+        });
+      }
+      await commit(item.id, picks, lastHourStart, end);
+      if (jatha) {
+        pickedJathaOverall = pickedJathaOverall ?? jatha;
+      }
+    } else if (shortage > 0) {
+      // Nothing picked, but still report shortage
+      shortages.push({
+        itemId: item.id,
+        role: 'KIRTAN',
+        needed: shortage,
+      });
+    }
+  }
+
+  for (const item of safeBooking.items) {
     const pt = item.programType;
-    const start = booking.start;
-    const end = booking.end;
+    const start = safeBooking.start;
+    const end = safeBooking.end;
+    const nameLc = pt.name.toLowerCase();
+
+    // --------------------------
+    // SEHAJ PATH variants (custom pattern)
+    // --------------------------
+    const isSehaj = nameLc.startsWith('sehaj path');
+    const isSehajWithKirtan = isSehaj && nameLc.includes('kirtan');
+    if (isSehaj) {
+      await assignSehajPathLike(item, isSehajWithKirtan);
+      continue;
+    }
 
     // --------------------------
     // AKHAND: prefer whole jatha, but fall back to best-effort staff
@@ -279,7 +415,7 @@ export async function autoAssignForBooking(
           } else {
             await prisma.bookingAssignment.createMany({
               data: closingPair.map((staffId) => ({
-                bookingId: booking.id,
+                bookingId: thisBookingId,
                 bookingItemId: item.id,
                 staffId,
                 start: closingStart,

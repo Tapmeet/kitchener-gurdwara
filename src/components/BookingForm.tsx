@@ -9,6 +9,11 @@ import { formatPhoneLive, toE164Generic } from '@/lib/phone';
 
 const MAX_ATTENDEES = Number(process.env.NEXT_PUBLIC_MAX_ATTENDEES);
 
+// Toggle this with NEXT_PUBLIC_DEBUG_AVAIL=1 in .env.local
+const DEBUG_AVAIL =
+  process.env.NEXT_PUBLIC_DEBUG_AVAIL === '1' ||
+  process.env.NODE_ENV === 'development';
+
 /* ---------- types ---------- */
 type LocationType = '' | 'GURDWARA' | 'OUTSIDE_GURDWARA';
 type ProgramCategory = 'KIRTAN' | 'PATH' | 'OTHER';
@@ -31,6 +36,8 @@ type FieldKey =
   | 'programType'
   | 'date'
   | 'startHour24'
+  | 'endDate'
+  | 'endHour24'
   | 'contactName'
   | 'contactPhone'
   | 'hallId'
@@ -40,27 +47,31 @@ type FieldErrors = Partial<Record<FieldKey, string>>;
 
 /** Friendly, simple messages per field; extras map schema keys -> our fields */
 const FRIENDLY: Record<FieldKey | 'start' | 'end' | 'items', string> = {
-  form: "Couldn't create the booking. Please try again.",
-  title: 'Please enter a reason.',
-  locationType: 'Please choose a location.',
-  address: 'Please enter the address.',
-  attendees: 'How many people are coming? (at least 1).',
+  form: "We couldn't create the booking. Please try again.",
+  title: 'Please enter the reason for the booking.',
+  locationType: 'Please select a location (Gurdwara or Outside Gurdwara).',
+  address: 'Please enter the full address.',
+  attendees: `Please enter attendees (1 to ${MAX_ATTENDEES}).`,
   programType: 'Please choose a program.',
-  date: 'Please choose a date.',
-  startHour24: 'Please choose a time.',
-  contactName: 'Please enter your name.',
-  contactPhone: 'Please enter a phone number.',
-  hallId: 'No hall fits this many people.',
-  start: 'Please choose a time.',
-  end: 'Please choose a time.',
+  date: 'Please choose a start date.',
+  startHour24: 'Please choose a start time.',
+  endDate: 'Please choose an end date.',
+  endHour24: 'Please choose an end time.',
+  contactName: 'Please enter your full name.',
+  contactPhone: 'Please enter a valid phone number (with country code).',
+  hallId: 'No hall is available for this attendee count at that time.',
+  start: 'Please choose a start time.',
+  end: 'Please choose an end time.',
   items: 'Please choose a program.',
-  contactEmail: 'Please enter a valid email.',
+  contactEmail: 'Please enter a valid email address.',
 };
 
 function mapPathToKey(raw: unknown): FieldKey {
   const s = String(raw ?? '');
-  if (s === 'start' || s === 'end') return 'startHour24';
+  if (s === 'start') return 'startHour24';
+  if (s === 'end') return 'endHour24';
   if (s === 'items') return 'programType';
+
   const known: FieldKey[] = [
     'form',
     'title',
@@ -70,13 +81,17 @@ function mapPathToKey(raw: unknown): FieldKey {
     'programType',
     'date',
     'startHour24',
+    'endDate',
+    'endHour24',
     'contactName',
     'contactPhone',
     'hallId',
     'contactEmail',
   ];
+
   return known.includes(s as FieldKey) ? (s as FieldKey) : 'form';
 }
+
 function msg(key: FieldKey, fallback?: string) {
   return FRIENDLY[key] || fallback || 'Please check this field.';
 }
@@ -204,6 +219,14 @@ export default function BookingForm() {
   const [locationType, setLocationType] = useState<LocationType>('');
   const [contactName, setContactName] = useState<string>('');
   const [contactEmail, setContactEmail] = useState<string>('');
+
+  // End-time availability (Sehaj only)
+  const [endAvailableSlots, setEndAvailableSlots] = useState<number[]>([]);
+  const [endAvailableMap, setEndAvailableMap] = useState<
+    Record<number, boolean>
+  >({});
+  const [isLoadingEndAvail, setIsLoadingEndAvail] = useState(false);
+
   // track user edits so prefill won’t override manual changes
   const editedRef = useRef({ name: false, email: false, phone: false });
 
@@ -229,6 +252,11 @@ export default function BookingForm() {
   // Date + time (set after mount to avoid SSR/CSR clock differences)
   const [date, setDate] = useState<string>(''); // empty on SSR & first client render
   const [startMinutes, setStartMinutes] = useState<number>(7 * 60);
+
+  // Manual end date/time for Sehaj Path programs
+  const [endDate, setEndDate] = useState<string>('');
+  const [endMinutes, setEndMinutes] = useState<number | null>(null);
+
   useEffect(() => {
     const n = new Date();
     const today = toLocalDateString(n);
@@ -242,6 +270,21 @@ export default function BookingForm() {
     () => programTypes.find((p) => p.id === selectedProgramId),
     [programTypes, selectedProgramId]
   );
+
+  // Is this Sehaj Path or Sehaj Path + Kirtan?
+  const isSehajProgram = useMemo(() => {
+    if (!selectedProgram) return false;
+    const name = selectedProgram.name.toLowerCase();
+    return name === 'sehaj path' || name === 'sehaj path + kirtan';
+  }, [selectedProgram]);
+
+  // When leaving Sehaj, clear manual end fields
+  useEffect(() => {
+    if (!isSehajProgram) {
+      setEndDate('');
+      setEndMinutes(null);
+    }
+  }, [isSehajProgram]);
 
   // UI hint: does this program require a full jatha?
   const requiresJatha = useMemo(() => {
@@ -274,8 +317,49 @@ export default function BookingForm() {
 
   // End-time preview
   const endLabel = useMemo(() => {
+    if (!selectedProgram) return null;
+
+    if (isSehajProgram) {
+      if (!date || !endDate || endMinutes == null) return null;
+
+      const startISO = toISOFromLocalDateMinutes(date, startMinutes);
+      const endISO = toISOFromLocalDateMinutes(endDate, endMinutes);
+      const start = new Date(startISO);
+      const end = new Date(endISO);
+      if (end <= start) return null;
+
+      const daySpan = Math.max(
+        1,
+        Math.round((end.getTime() - start.getTime()) / MS_PER_DAY)
+      );
+
+      const endDateLabel = end.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+      const endTimeLabel = end.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+
+      const spanText =
+        daySpan > 1 ? ` (${daySpan} day${daySpan > 1 ? 's' : ''})` : '';
+
+      return `Ends on ${endDateLabel} ${endTimeLabel}${spanText}`;
+    }
+
     return computeEndPreview(date, startMinutes, durationMinutes);
-  }, [date, startMinutes, durationMinutes]);
+  }, [
+    selectedProgram,
+    isSehajProgram,
+    date,
+    startMinutes,
+    durationMinutes,
+    endDate,
+    endMinutes,
+  ]);
 
   const selectedProgramKey = selectedProgramId || '';
 
@@ -314,11 +398,29 @@ export default function BookingForm() {
       .then((r) => r.json())
       .then((j) => {
         if (aborted) return;
+
+        if (DEBUG_AVAIL) {
+          console.log('[BookingForm] /api/availability response', {
+            url,
+            date,
+            locationType,
+            selectedProgramKey,
+            attendees,
+            raw: j,
+            hours: j.hours,
+            availableByHour: j.availableByHour,
+            remainingByHour: j.remainingByHour,
+          });
+        }
+
         setAvailableSlots(Array.isArray(j.hours) ? j.hours : []);
         setAvailableMap(j.availableByHour || {});
       })
-      .catch(() => {
+      .catch((err) => {
         if (aborted) return;
+        if (DEBUG_AVAIL) {
+          console.error('[BookingForm] /api/availability error', { url, err });
+        }
         setAvailableSlots([]);
         setAvailableMap({});
       })
@@ -331,34 +433,301 @@ export default function BookingForm() {
     };
   }, [date, selectedProgramKey, locationType, attendees]);
 
+  useEffect(() => {
+    if (
+      !isSehajProgram ||
+      !selectedProgramId ||
+      !locationType ||
+      !date ||
+      !endDate
+    ) {
+      setEndAvailableSlots([]);
+      setEndAvailableMap({});
+      setIsLoadingEndAvail(false);
+      return;
+    }
+
+    const startISO = toISOFromLocalDateMinutes(date, startMinutes);
+
+    const params = new URLSearchParams({
+      start: startISO,
+      endDate,
+      programTypeIds: selectedProgramId,
+      locationType,
+    });
+    if (attendees) params.set('attendees', attendees);
+
+    const url = `/api/availability-end?${params.toString()}`;
+    let aborted = false;
+
+    setIsLoadingEndAvail(true);
+    setEndAvailableSlots([]);
+    setEndAvailableMap({});
+
+    fetch(url)
+      .then((r) => r.json())
+      .then((j) => {
+        if (aborted) return;
+
+        if (DEBUG_AVAIL) {
+          console.log('[BookingForm] /api/availability-end response', {
+            url,
+            raw: j,
+          });
+        }
+
+        setEndAvailableSlots(Array.isArray(j.hours) ? j.hours : []);
+        setEndAvailableMap(j.availableByHour || {});
+      })
+      .catch(() => {
+        if (aborted) return;
+        setEndAvailableSlots([]);
+        setEndAvailableMap({});
+      })
+      .finally(() => {
+        if (!aborted) setIsLoadingEndAvail(false);
+      });
+
+    return () => {
+      aborted = true;
+    };
+  }, [
+    isSehajProgram,
+    selectedProgramId,
+    locationType,
+    date,
+    startMinutes,
+    endDate,
+    attendees,
+  ]);
+
+  const selectableEndSlots = useMemo(() => {
+    if (!endDate) return [];
+    const minMin = minSelectableMinutes(endDate);
+
+    // base options in business hours
+    let base = BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
+
+    // if endDate is same as start date, end must be after start
+    if (endDate === date) base = base.filter((m) => m > startMinutes);
+
+    return base;
+  }, [endDate, date, startMinutes]);
+
+  useEffect(() => {
+    if (!isSehajProgram || !endDate) return;
+
+    const hasData = Object.keys(endAvailableMap).length > 0;
+
+    const isCurrentOk =
+      endMinutes != null &&
+      selectableEndSlots.includes(endMinutes) &&
+      (!hasData || !!endAvailableMap[endMinutes]);
+
+    if (isCurrentOk) return;
+
+    const firstOk = hasData
+      ? selectableEndSlots.find((m) => !!endAvailableMap[m])
+      : selectableEndSlots[0];
+
+    setEndMinutes(firstOk ?? null);
+  }, [
+    isSehajProgram,
+    endDate,
+    selectableEndSlots,
+    endAvailableMap,
+    endMinutes,
+  ]);
+
+  // Pre-compute which minutes we actually want to show in the Start Time dropdown.
+  // We only show slots that are *actually bookable* according to availableByHour.
+  const selectableStartSlots = useMemo(() => {
+    if (!date) return [];
+
+    const minMin = minSelectableMinutes(date);
+
+    // Always show the full grid (business hours), but hide past times for today
+    return BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
+  }, [date]);
+
   // Keep selected start hour valid
   useEffect(() => {
-    const minMin = minSelectableMinutes(date);
-    const allList = BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
-    const allowed = allList.filter((m) => availableMap[m]);
-    if (allowed.length && !availableMap[startMinutes]) {
-      setStartMinutes(allowed[0]);
+    if (!date) return;
+
+    if (
+      selectableStartSlots.length > 0 &&
+      !selectableStartSlots.includes(startMinutes)
+    ) {
+      setStartMinutes(selectableStartSlots[0]);
     }
-  }, [availableMap, date, startMinutes]);
+  }, [date, selectableStartSlots, startMinutes]);
 
-  // Count how many selectable times exist
-  const allowedTimesCount = useMemo(() => {
-    const minMin = minSelectableMinutes(date);
-    const list = BUSINESS_SLOTS_MINUTES.filter((m) => m >= minMin);
-    return list.filter(
-      (mins) =>
-        availableMap[mins] === true ||
-        (availableSlots.length > 0 && availableSlots.includes(mins))
-    ).length;
-  }, [date, availableMap, availableSlots]);
+  // Count how many selectable times exist (already filtered to available slots)
+  const allowedTimesCount = useMemo(
+    () => selectableStartSlots.length,
+    [selectableStartSlots]
+  );
 
-  // Disable submit unless we have a valid slot (and not still loading)
+  const sehajEndChosen = !isSehajProgram || (endDate && endMinutes != null);
+
+  const endOk = !isSehajProgram
+    ? true
+    : !!endDate &&
+      endMinutes != null &&
+      (Object.keys(endAvailableMap).length > 0
+        ? !!endAvailableMap[endMinutes]
+        : true);
+
+  const hasAvailability = Object.keys(availableMap).length > 0;
+  const startOk = hasAvailability ? !!availableMap[startMinutes] : true;
+
   const canSubmit =
     !!selectedProgramId &&
     !!locationType &&
+    sehajEndChosen &&
+    endOk &&
     !isLoadingAvail &&
-    (availableMap[startMinutes] === true ||
-      (availableSlots.length > 0 && availableSlots.includes(startMinutes)));
+    !isLoadingEndAvail &&
+    !!date &&
+    startOk;
+
+  const missingLocation = !locationType;
+  const missingProgram = !selectedProgramId;
+
+  const attendeesNum = Number(attendees);
+  const missingAttendees =
+    !attendees || !Number.isFinite(attendeesNum) || attendeesNum < 1;
+
+  const hasStartData = Object.keys(availableMap).length > 0;
+  const startSlotUnavailable = hasStartData
+    ? !availableMap[startMinutes]
+    : false;
+
+  const missingSehajEndDate = isSehajProgram && !endDate;
+  const missingSehajEndTime = isSehajProgram && endMinutes == null;
+
+  const hasEndData = Object.keys(endAvailableMap).length > 0;
+  const endSlotUnavailable =
+    isSehajProgram && endMinutes != null && hasEndData
+      ? !endAvailableMap[endMinutes]
+      : false;
+
+  const submitUI = useMemo(() => {
+    // busy states override everything
+    if (submitting) return { label: 'Submitting…', hint: '', ready: false };
+    if (isLoadingAvail || isLoadingEndAvail)
+      return { label: 'Checking availability…', hint: '', ready: false };
+
+    // guide user with the most important missing thing
+    if (missingProgram)
+      return {
+        label: 'Select a program',
+        hint: 'Choose a program to continue.',
+        ready: false,
+      };
+
+    if (missingLocation)
+      return {
+        label: 'Select a location',
+        hint: 'Select Gurdwara or Outside Gurdwara.',
+        ready: false,
+      };
+
+    if (missingAttendees)
+      return {
+        label: 'Enter attendees',
+        hint: `Enter 1 to ${MAX_ATTENDEES} attendees.`,
+        ready: false,
+      };
+
+    // Sehaj-specific guidance
+    if (missingSehajEndDate)
+      return {
+        label: 'Choose end date',
+        hint: 'Select when the Path/Kirtan ends.',
+        ready: false,
+      };
+
+    if (missingSehajEndTime)
+      return {
+        label: 'Choose end time',
+        hint: 'Select an end time after the start time.',
+        ready: false,
+      };
+
+    // availability-based guidance
+    if (startSlotUnavailable)
+      return {
+        label: 'Pick another start time',
+        hint: 'That start time isn’t available.',
+        ready: false,
+      };
+
+    if (endSlotUnavailable)
+      return {
+        label: 'Pick another end time',
+        hint: 'That end time isn’t available.',
+        ready: false,
+      };
+
+    // if everything looks good
+    if (canSubmit) return { label: 'Create Booking', hint: '', ready: true };
+
+    // fallback (rare)
+    return {
+      label: 'Create Booking',
+      hint: 'Please review the form and try again.',
+      ready: false,
+    };
+  }, [
+    submitting,
+    isLoadingAvail,
+    isLoadingEndAvail,
+    missingProgram,
+    missingLocation,
+    missingAttendees,
+    missingSehajEndDate,
+    missingSehajEndTime,
+    startSlotUnavailable,
+    endSlotUnavailable,
+    canSubmit,
+  ]);
+
+  useEffect(() => {
+    if (!DEBUG_AVAIL) return;
+
+    console.log('[BookingForm] availability state snapshot', {
+      date,
+      selectedProgramId,
+      programName: selectedProgram?.name,
+      locationType,
+      attendees,
+      availableSlots,
+      availableMap,
+      selectableStartSlots,
+      startMinutes,
+      allowedTimesCount,
+      canSubmit,
+      isSehajProgram,
+      endDate,
+      endMinutes,
+    });
+  }, [
+    date,
+    selectedProgramId,
+    selectedProgram,
+    locationType,
+    attendees,
+    availableSlots,
+    availableMap,
+    selectableStartSlots,
+    startMinutes,
+    allowedTimesCount,
+    canSubmit,
+    isSehajProgram,
+    endDate,
+    endMinutes,
+  ]);
 
   /* ---- Specific refs per field ---- */
   const titleRef = useRef<HTMLInputElement | null>(null);
@@ -367,6 +736,8 @@ export default function BookingForm() {
   const programTypeRef = useRef<HTMLInputElement | null>(null);
   const dateRef = useRef<HTMLInputElement | null>(null);
   const startHour24Ref = useRef<HTMLSelectElement | null>(null);
+  const endDateRef = useRef<HTMLInputElement | null>(null);
+  const endHour24Ref = useRef<HTMLSelectElement | null>(null);
   const contactNameRef = useRef<HTMLInputElement | null>(null);
   const contactPhoneRef = useRef<HTMLInputElement | null>(null);
   const successTimerRef = useRef<number | null>(null);
@@ -397,6 +768,10 @@ export default function BookingForm() {
         return dateRef.current;
       case 'startHour24':
         return startHour24Ref.current;
+      case 'endDate':
+        return endDateRef.current;
+      case 'endHour24':
+        return endHour24Ref.current;
       case 'contactName':
         return contactNameRef.current;
       case 'contactPhone':
@@ -419,6 +794,8 @@ export default function BookingForm() {
       'attendees',
       'date',
       'startHour24',
+      'endDate',
+      'endHour24',
       'contactName',
       'contactPhone',
       'address',
@@ -445,6 +822,8 @@ export default function BookingForm() {
     setLocationType('');
     setDate('');
     setStartMinutes(7 * 60);
+    setEndDate('');
+    setEndMinutes(null);
     setPhone('');
     setContactName('');
     setContactEmail('');
@@ -473,71 +852,125 @@ export default function BookingForm() {
 
     const nextErrors: FieldErrors = {};
 
-    if (!selectedProgramId) {
-      nextErrors.programType = FRIENDLY.programType;
-    }
-    const loc = (locationType || String(fd.get('locationType') || '')) as
-      | 'GURDWARA'
-      | 'OUTSIDE_GURDWARA'
-      | '';
-    if (!loc) {
-      nextErrors.locationType = FRIENDLY.locationType;
-    }
-    if (loc === 'OUTSIDE_GURDWARA' && !String(fd.get('address') || '').trim()) {
+    const titleRaw = String(fd.get('title') || '').trim();
+    if (!titleRaw) nextErrors.title = FRIENDLY.title;
+
+    if (!selectedProgramId) nextErrors.programType = FRIENDLY.programType;
+
+    const loc = (locationType ||
+      String(fd.get('locationType') || '')) as LocationType;
+    if (!loc) nextErrors.locationType = FRIENDLY.locationType;
+
+    const addressRaw = String(fd.get('address') || '').trim();
+    if (loc === 'OUTSIDE_GURDWARA' && !addressRaw)
       nextErrors.address = FRIENDLY.address;
+
+    const attendeesNum = Number(attendees);
+    if (!attendees || !Number.isFinite(attendeesNum) || attendeesNum < 1) {
+      nextErrors.attendees = FRIENDLY.attendees;
+    } else if (attendeesNum > MAX_ATTENDEES) {
+      nextErrors.attendees = `Maximum ${MAX_ATTENDEES} attendees allowed.`;
     }
 
-    // Block submission if the chosen hour is unavailable
-    const minMin = minSelectableMinutes(date);
-    const isPast = date === todayLocalDateString() && startMinutes < minMin;
-    const slotKnown =
-      Object.keys(availableMap).length > 0 || availableSlots.length > 0;
-    const slotAvailable =
-      availableMap[startMinutes] === true ||
-      (availableSlots.length > 0 && availableSlots.includes(startMinutes));
-
-    if (!date) {
-      nextErrors.date = FRIENDLY.date;
-    } else if (isPast) {
-      nextErrors.startHour24 =
-        'That time has already passed. Pick a later time.';
-    } else if (slotKnown && !slotAvailable) {
-      nextErrors.startHour24 = 'That time is unavailable. Please pick another.';
-    }
-
-    const startISO = toISOFromLocalDateMinutes(date, startMinutes);
-    const endISO = new Date(
-      new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
-    ).toISOString();
+    const contactNameRaw = contactName.trim();
+    if (!contactNameRaw) nextErrors.contactName = FRIENDLY.contactName;
 
     const phoneRaw = phone || String(fd.get('contactPhone') || '');
     const phoneE164 = toE164Generic(phoneRaw);
-    if (!phoneE164) {
-      nextErrors.contactPhone = FRIENDLY.contactPhone;
+    if (!phoneE164) nextErrors.contactPhone = FRIENDLY.contactPhone;
+
+    if (!date) {
+      nextErrors.date = FRIENDLY.date;
     }
 
-    if (!attendees || Number(attendees) < 1) {
-      nextErrors.attendees = FRIENDLY.attendees;
-    } else if (Number(attendees) > MAX_ATTENDEES) {
-      nextErrors.attendees = `Maximum ${MAX_ATTENDEES} attendees allowed.`;
+    // Start time validation only when program + location + date are chosen
+    if (date && loc && selectedProgramId) {
+      const minMin = minSelectableMinutes(date);
+      const isPast = date === todayLocalDateString() && startMinutes < minMin;
+
+      const hasData = Object.keys(availableMap).length > 0;
+      const anyAvailable = hasData
+        ? selectableStartSlots.some((m) => !!availableMap[m])
+        : true;
+
+      const slotAvailable = hasData ? !!availableMap[startMinutes] : true;
+
+      if (isPast) {
+        nextErrors.startHour24 =
+          'That start time has already passed. Pick a later time.';
+      } else if (hasData && !anyAvailable) {
+        nextErrors.startHour24 =
+          'No start times are available for this date/location. Try another date or location.';
+      } else if (hasData && !slotAvailable) {
+        nextErrors.startHour24 =
+          'That start time is unavailable. Please pick another.';
+      }
+    }
+
+    // Sehaj end validations
+    if (isSehajProgram) {
+      if (!endDate) nextErrors.endDate = FRIENDLY.endDate;
+      if (endMinutes == null) nextErrors.endHour24 = FRIENDLY.endHour24;
+
+      if (date && endDate && endMinutes != null) {
+        const startISOForCompare = toISOFromLocalDateMinutes(
+          date,
+          startMinutes
+        );
+        const endISOForCompare = toISOFromLocalDateMinutes(endDate, endMinutes);
+        if (new Date(endISOForCompare) <= new Date(startISOForCompare)) {
+          nextErrors.endHour24 = 'End time must be after the start time.';
+        }
+      }
+
+      const hasEndData = Object.keys(endAvailableMap).length > 0;
+      if (hasEndData && endDate) {
+        const anyEndAvailable = selectableEndSlots.some(
+          (m) => !!endAvailableMap[m]
+        );
+        if (!anyEndAvailable) {
+          nextErrors.endHour24 =
+            'No end times are available for that end date. Try a different end date or adjust the start time.';
+        } else if (endMinutes != null && !endAvailableMap[endMinutes]) {
+          nextErrors.endHour24 =
+            'That end time is unavailable. Please pick another.';
+        }
+      }
+    }
+
+    // If anything is missing/invalid, show it now (prevents ISO crashes)
+    if (Object.keys(nextErrors).length > 0) {
+      setSubmitting(false);
+      setErrors(nextErrors);
+      focusFirstInvalid(nextErrors);
+      return;
+    }
+
+    // --- now safe to build ISO strings ---
+    const startISO = toISOFromLocalDateMinutes(date, startMinutes);
+    let endISO: string;
+
+    if (isSehajProgram && endDate && endMinutes != null) {
+      endISO = toISOFromLocalDateMinutes(endDate, endMinutes);
+    } else {
+      endISO = new Date(
+        new Date(startISO).getTime() + (durationMinutes || 0) * 60 * 1000
+      ).toISOString();
     }
 
     const contactEmailRaw = contactEmail.trim();
 
     const payload = {
-      title: String(fd.get('title') || '').trim(),
+      title: titleRaw,
       start: startISO,
       end: endISO,
       locationType: loc as 'GURDWARA' | 'OUTSIDE_GURDWARA',
-      address:
-        loc === 'OUTSIDE_GURDWARA'
-          ? String(fd.get('address') || '').trim() || null
-          : null,
-      contactName: String(fd.get('contactName') || '').trim(),
+      address: loc === 'OUTSIDE_GURDWARA' ? addressRaw || null : null,
+      contactName: contactNameRaw,
       contactPhone: phoneE164,
       notes: (fd.get('notes') as string | null) || null,
       items: selectedProgramId ? [{ programTypeId: selectedProgramId }] : [],
-      attendees: Number(attendees),
+      attendees: attendeesNum,
       contactEmail: contactEmailRaw || null,
     } as const;
 
@@ -812,7 +1245,7 @@ export default function BookingForm() {
             <div className='grid md:grid-cols-2 gap-4'>
               <div>
                 <label className='label' htmlFor='date'>
-                  Date
+                  Start Date
                 </label>
                 <input
                   ref={dateRef}
@@ -888,40 +1321,27 @@ export default function BookingForm() {
                 >
                   {isLoadingAvail ? (
                     <option value='' disabled>
-                      Loading available times…
+                      Loading…
+                    </option>
+                  ) : selectableStartSlots.length === 0 ? (
+                    <option value='' disabled>
+                      No times available for the selected date
                     </option>
                   ) : (
-                    (() => {
-                      const minMin = minSelectableMinutes(date);
-                      const list = BUSINESS_SLOTS_MINUTES.filter(
-                        (m) => m >= minMin
+                    selectableStartSlots.map((mins) => {
+                      const label = formatTimeLabelFromMinutes(mins);
+
+                      // If backend didn’t send availability, assume available (fallback mode)
+                      const hasAvailability =
+                        Object.keys(availableMap).length > 0;
+                      const ok = hasAvailability ? !!availableMap[mins] : true;
+
+                      return (
+                        <option key={mins} value={mins} disabled={!ok}>
+                          {label} {!ok ? ' (Not available)' : ''}
+                        </option>
                       );
-
-                      if (list.length === 0) {
-                        return (
-                          <option value='' disabled>
-                            No times available for the selected date
-                          </option>
-                        );
-                      }
-
-                      return list.map((mins) => {
-                        const isAvailable =
-                          availableMap[mins] === true ||
-                          (availableSlots.length > 0 &&
-                            availableSlots.includes(mins));
-                        const label = `${formatTimeLabelFromMinutes(mins)}${isAvailable ? '' : ' — unavailable'}`;
-                        return (
-                          <option
-                            key={mins}
-                            value={mins}
-                            disabled={!isAvailable}
-                          >
-                            {label}
-                          </option>
-                        );
-                      });
-                    })()
+                    })
                   )}
                 </select>
 
@@ -938,9 +1358,11 @@ export default function BookingForm() {
                 )}
                 {!isLoadingAvail && selectedProgramId && locationType && (
                   <p className='text-xs text-gray-500 mt-1'>
-                    Unavailable times are greyed out.
+                    Only available start times are shown for this program and
+                    date.
                   </p>
                 )}
+
                 {!isLoadingAvail &&
                   selectedProgramId &&
                   locationType &&
@@ -960,10 +1382,126 @@ export default function BookingForm() {
                   </p>
                 )}
               </div>
+              {isSehajProgram && (
+                <>
+                  <div>
+                    <label className='label' htmlFor='endDate'>
+                      End Date
+                    </label>
+                    <input
+                      ref={endDateRef}
+                      type='date'
+                      id='endDate'
+                      name='endDate'
+                      className={`input ${errors.endDate ? invalidCls : ''}`}
+                      value={endDate}
+                      min={date || todayLocalDateString()}
+                      onChange={(e) => {
+                        setEndDate(e.target.value);
+                        clearFieldError('endDate');
+                      }}
+                    />
+                    {errors.endDate && (
+                      <p id='err-endDate' className='text-xs text-red-600 mt-1'>
+                        {errors.endDate}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className='label' htmlFor='endHour24'>
+                      End Time
+                      {isLoadingEndAvail && (
+                        <span className='ml-2 inline-flex items-center text-xs text-gray-500'>
+                          Loading…
+                        </span>
+                      )}
+                    </label>
+
+                    <select
+                      ref={endHour24Ref}
+                      id='endHour24'
+                      className={`select ${errors.endHour24 ? invalidCls : ''}`}
+                      value={
+                        isLoadingEndAvail ? ('' as any) : (endMinutes ?? '')
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setEndMinutes(v ? Number(v) : null);
+                        clearFieldError('endHour24');
+                      }}
+                      disabled={!endDate || isLoadingEndAvail}
+                      aria-busy={isLoadingEndAvail}
+                      aria-invalid={!!errors.endHour24}
+                      aria-describedby={
+                        errors.endHour24 ? 'err-endHour24' : undefined
+                      }
+                    >
+                      {isLoadingEndAvail ? (
+                        <option value='' disabled>
+                          Loading…
+                        </option>
+                      ) : (
+                        <option value='' disabled>
+                          {endDate
+                            ? 'Select end time'
+                            : 'Select end date first'}
+                        </option>
+                      )}
+
+                      {!isLoadingEndAvail &&
+                        endDate &&
+                        selectableEndSlots.map((mins) => {
+                          const hasEndAvailability =
+                            Object.keys(endAvailableMap).length > 0;
+                          const ok = hasEndAvailability
+                            ? !!endAvailableMap[mins]
+                            : true;
+
+                          return (
+                            <option key={mins} value={mins} disabled={!ok}>
+                              {formatTimeLabelFromMinutes(mins)}{' '}
+                              {!ok ? ' (Not available)' : ''}
+                            </option>
+                          );
+                        })}
+                    </select>
+
+                    {!isLoadingEndAvail && endDate && (
+                      <p className='text-xs text-gray-500 mt-1'>
+                        Unavailable end times are disabled.
+                      </p>
+                    )}
+
+                    {errors.endHour24 && (
+                      <p
+                        id='err-endHour24'
+                        className='text-xs text-red-600 mt-1'
+                      >
+                        {errors.endHour24}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className='md:col-span-2 -mt-2'>
                 {selectedProgram && endLabel && (
                   <p className='text-xs text-gray-600'>{endLabel}</p>
+                )}
+                {isSehajProgram && selectedProgram && (
+                  <p className='text-xs text-gray-500 mt-1'>
+                    {selectedProgram.name.toLowerCase().includes('kirtan') ? (
+                      <>
+                        End time is when the <strong>Kirtan</strong> ends. (The{' '}
+                        <strong>Path</strong> ends 1 hour before.)
+                      </>
+                    ) : (
+                      <>
+                        End time is when the <strong>Path</strong> ends.
+                      </>
+                    )}
+                  </p>
                 )}
               </div>
             </div>
@@ -1082,8 +1620,8 @@ export default function BookingForm() {
               <div>
                 <button
                   type='submit'
-                  aria-busy={submitting || isLoadingAvail}
-                  disabled={submitting || isLoadingAvail || !canSubmit || !date}
+                  aria-busy={submitting || isLoadingAvail || isLoadingEndAvail}
+                  disabled={submitting || isLoadingAvail || isLoadingEndAvail}
                   className={[
                     'w-full whitespace-nowrap rounded-md px-4 py-2 font-medium text-white transition',
                     'relative overflow-hidden border border-white/15',
@@ -1091,17 +1629,21 @@ export default function BookingForm() {
                     'hover:from-blue-800/80 hover:to-blue-800/60 active:scale-[.99]',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40',
                     'disabled:opacity-50 disabled:cursor-not-allowed',
-                    submitting || isLoadingAvail || !canSubmit
-                      ? 'opacity-70'
-                      : '',
+                    !submitUI.ready ? 'opacity-70' : '',
                   ].join(' ')}
                 >
-                  {submitting
-                    ? 'Submitting…'
-                    : isLoadingAvail
-                      ? 'Checking availability…'
-                      : 'Create Booking'}
+                  {submitUI.label}
                 </button>
+
+                {!submitUI.ready &&
+                  !submitting &&
+                  !isLoadingAvail &&
+                  !isLoadingEndAvail &&
+                  submitUI.hint && (
+                    <p className='mt-2 text-xs text-gray-500'>
+                      {submitUI.hint}
+                    </p>
+                  )}
               </div>
             </div>
           </div>
