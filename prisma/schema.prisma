@@ -160,6 +160,9 @@ model SpaceBooking {
   title       String
   description String?
 
+  // Only used for OUTSIDE_GURDWARA space bookings
+  address     String?
+
   // Where this “space booking” lives
   locationType LocationType
 

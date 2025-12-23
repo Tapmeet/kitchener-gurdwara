@@ -38,6 +38,7 @@ export type SpaceBookingMinAggregateOutputType = {
   id: string | null
   title: string | null
   description: string | null
+  address: string | null
   locationType: $Enums.LocationType | null
   hallId: string | null
   blocksHall: boolean | null
@@ -57,6 +58,7 @@ export type SpaceBookingMaxAggregateOutputType = {
   id: string | null
   title: string | null
   description: string | null
+  address: string | null
   locationType: $Enums.LocationType | null
   hallId: string | null
   blocksHall: boolean | null
@@ -76,6 +78,7 @@ export type SpaceBookingCountAggregateOutputType = {
   id: number
   title: number
   description: number
+  address: number
   locationType: number
   hallId: number
   blocksHall: number
@@ -105,6 +108,7 @@ export type SpaceBookingMinAggregateInputType = {
   id?: true
   title?: true
   description?: true
+  address?: true
   locationType?: true
   hallId?: true
   blocksHall?: true
@@ -124,6 +128,7 @@ export type SpaceBookingMaxAggregateInputType = {
   id?: true
   title?: true
   description?: true
+  address?: true
   locationType?: true
   hallId?: true
   blocksHall?: true
@@ -143,6 +148,7 @@ export type SpaceBookingCountAggregateInputType = {
   id?: true
   title?: true
   description?: true
+  address?: true
   locationType?: true
   hallId?: true
   blocksHall?: true
@@ -249,6 +255,7 @@ export type SpaceBookingGroupByOutputType = {
   id: string
   title: string
   description: string | null
+  address: string | null
   locationType: $Enums.LocationType
   hallId: string | null
   blocksHall: boolean
@@ -291,6 +298,7 @@ export type SpaceBookingWhereInput = {
   id?: Prisma.StringFilter<"SpaceBooking"> | string
   title?: Prisma.StringFilter<"SpaceBooking"> | string
   description?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
+  address?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   locationType?: Prisma.EnumLocationTypeFilter<"SpaceBooking"> | $Enums.LocationType
   hallId?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   blocksHall?: Prisma.BoolFilter<"SpaceBooking"> | boolean
@@ -312,6 +320,7 @@ export type SpaceBookingOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   title?: Prisma.SortOrder
   description?: Prisma.SortOrderInput | Prisma.SortOrder
+  address?: Prisma.SortOrderInput | Prisma.SortOrder
   locationType?: Prisma.SortOrder
   hallId?: Prisma.SortOrderInput | Prisma.SortOrder
   blocksHall?: Prisma.SortOrder
@@ -336,6 +345,7 @@ export type SpaceBookingWhereUniqueInput = Prisma.AtLeast<{
   NOT?: Prisma.SpaceBookingWhereInput | Prisma.SpaceBookingWhereInput[]
   title?: Prisma.StringFilter<"SpaceBooking"> | string
   description?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
+  address?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   locationType?: Prisma.EnumLocationTypeFilter<"SpaceBooking"> | $Enums.LocationType
   hallId?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   blocksHall?: Prisma.BoolFilter<"SpaceBooking"> | boolean
@@ -357,6 +367,7 @@ export type SpaceBookingOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   title?: Prisma.SortOrder
   description?: Prisma.SortOrderInput | Prisma.SortOrder
+  address?: Prisma.SortOrderInput | Prisma.SortOrder
   locationType?: Prisma.SortOrder
   hallId?: Prisma.SortOrderInput | Prisma.SortOrder
   blocksHall?: Prisma.SortOrder
@@ -384,6 +395,7 @@ export type SpaceBookingScalarWhereWithAggregatesInput = {
   id?: Prisma.StringWithAggregatesFilter<"SpaceBooking"> | string
   title?: Prisma.StringWithAggregatesFilter<"SpaceBooking"> | string
   description?: Prisma.StringNullableWithAggregatesFilter<"SpaceBooking"> | string | null
+  address?: Prisma.StringNullableWithAggregatesFilter<"SpaceBooking"> | string | null
   locationType?: Prisma.EnumLocationTypeWithAggregatesFilter<"SpaceBooking"> | $Enums.LocationType
   hallId?: Prisma.StringNullableWithAggregatesFilter<"SpaceBooking"> | string | null
   blocksHall?: Prisma.BoolWithAggregatesFilter<"SpaceBooking"> | boolean
@@ -403,6 +415,7 @@ export type SpaceBookingCreateInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   blocksHall?: boolean
   isPublicTitle?: boolean
@@ -422,6 +435,7 @@ export type SpaceBookingUncheckedCreateInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   hallId?: string | null
   blocksHall?: boolean
@@ -441,6 +455,7 @@ export type SpaceBookingUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -460,6 +475,7 @@ export type SpaceBookingUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   hallId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -479,6 +495,7 @@ export type SpaceBookingCreateManyInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   hallId?: string | null
   blocksHall?: boolean
@@ -498,6 +515,7 @@ export type SpaceBookingUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -515,6 +533,7 @@ export type SpaceBookingUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   hallId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -544,6 +563,7 @@ export type SpaceBookingCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   title?: Prisma.SortOrder
   description?: Prisma.SortOrder
+  address?: Prisma.SortOrder
   locationType?: Prisma.SortOrder
   hallId?: Prisma.SortOrder
   blocksHall?: Prisma.SortOrder
@@ -567,6 +587,7 @@ export type SpaceBookingMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   title?: Prisma.SortOrder
   description?: Prisma.SortOrder
+  address?: Prisma.SortOrder
   locationType?: Prisma.SortOrder
   hallId?: Prisma.SortOrder
   blocksHall?: Prisma.SortOrder
@@ -586,6 +607,7 @@ export type SpaceBookingMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   title?: Prisma.SortOrder
   description?: Prisma.SortOrder
+  address?: Prisma.SortOrder
   locationType?: Prisma.SortOrder
   hallId?: Prisma.SortOrder
   blocksHall?: Prisma.SortOrder
@@ -697,6 +719,7 @@ export type SpaceBookingCreateWithoutCreatedByInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   blocksHall?: boolean
   isPublicTitle?: boolean
@@ -715,6 +738,7 @@ export type SpaceBookingUncheckedCreateWithoutCreatedByInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   hallId?: string | null
   blocksHall?: boolean
@@ -762,6 +786,7 @@ export type SpaceBookingScalarWhereInput = {
   id?: Prisma.StringFilter<"SpaceBooking"> | string
   title?: Prisma.StringFilter<"SpaceBooking"> | string
   description?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
+  address?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   locationType?: Prisma.EnumLocationTypeFilter<"SpaceBooking"> | $Enums.LocationType
   hallId?: Prisma.StringNullableFilter<"SpaceBooking"> | string | null
   blocksHall?: Prisma.BoolFilter<"SpaceBooking"> | boolean
@@ -781,6 +806,7 @@ export type SpaceBookingCreateWithoutHallInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   blocksHall?: boolean
   isPublicTitle?: boolean
@@ -799,6 +825,7 @@ export type SpaceBookingUncheckedCreateWithoutHallInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   blocksHall?: boolean
   isPublicTitle?: boolean
@@ -843,6 +870,7 @@ export type SpaceBookingCreateManyCreatedByInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   hallId?: string | null
   blocksHall?: boolean
@@ -861,6 +889,7 @@ export type SpaceBookingUpdateWithoutCreatedByInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -879,6 +908,7 @@ export type SpaceBookingUncheckedUpdateWithoutCreatedByInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   hallId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -897,6 +927,7 @@ export type SpaceBookingUncheckedUpdateManyWithoutCreatedByInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   hallId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -915,6 +946,7 @@ export type SpaceBookingCreateManyHallInput = {
   id?: string
   title: string
   description?: string | null
+  address?: string | null
   locationType: $Enums.LocationType
   blocksHall?: boolean
   isPublicTitle?: boolean
@@ -933,6 +965,7 @@ export type SpaceBookingUpdateWithoutHallInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -951,6 +984,7 @@ export type SpaceBookingUncheckedUpdateWithoutHallInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -969,6 +1003,7 @@ export type SpaceBookingUncheckedUpdateManyWithoutHallInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   title?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  address?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   locationType?: Prisma.EnumLocationTypeFieldUpdateOperationsInput | $Enums.LocationType
   blocksHall?: Prisma.BoolFieldUpdateOperationsInput | boolean
   isPublicTitle?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -989,6 +1024,7 @@ export type SpaceBookingSelect<ExtArgs extends runtime.Types.Extensions.Internal
   id?: boolean
   title?: boolean
   description?: boolean
+  address?: boolean
   locationType?: boolean
   hallId?: boolean
   blocksHall?: boolean
@@ -1010,6 +1046,7 @@ export type SpaceBookingSelectCreateManyAndReturn<ExtArgs extends runtime.Types.
   id?: boolean
   title?: boolean
   description?: boolean
+  address?: boolean
   locationType?: boolean
   hallId?: boolean
   blocksHall?: boolean
@@ -1031,6 +1068,7 @@ export type SpaceBookingSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.
   id?: boolean
   title?: boolean
   description?: boolean
+  address?: boolean
   locationType?: boolean
   hallId?: boolean
   blocksHall?: boolean
@@ -1052,6 +1090,7 @@ export type SpaceBookingSelectScalar = {
   id?: boolean
   title?: boolean
   description?: boolean
+  address?: boolean
   locationType?: boolean
   hallId?: boolean
   blocksHall?: boolean
@@ -1067,7 +1106,7 @@ export type SpaceBookingSelectScalar = {
   updatedAt?: boolean
 }
 
-export type SpaceBookingOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "title" | "description" | "locationType" | "hallId" | "blocksHall" | "isPublicTitle" | "start" | "end" | "recurrence" | "interval" | "until" | "isActive" | "createdById" | "createdAt" | "updatedAt", ExtArgs["result"]["spaceBooking"]>
+export type SpaceBookingOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "title" | "description" | "address" | "locationType" | "hallId" | "blocksHall" | "isPublicTitle" | "start" | "end" | "recurrence" | "interval" | "until" | "isActive" | "createdById" | "createdAt" | "updatedAt", ExtArgs["result"]["spaceBooking"]>
 export type SpaceBookingInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   hall?: boolean | Prisma.SpaceBooking$hallArgs<ExtArgs>
   createdBy?: boolean | Prisma.SpaceBooking$createdByArgs<ExtArgs>
@@ -1091,6 +1130,7 @@ export type $SpaceBookingPayload<ExtArgs extends runtime.Types.Extensions.Intern
     id: string
     title: string
     description: string | null
+    address: string | null
     locationType: $Enums.LocationType
     hallId: string | null
     blocksHall: boolean
@@ -1532,6 +1572,7 @@ export interface SpaceBookingFieldRefs {
   readonly id: Prisma.FieldRef<"SpaceBooking", 'String'>
   readonly title: Prisma.FieldRef<"SpaceBooking", 'String'>
   readonly description: Prisma.FieldRef<"SpaceBooking", 'String'>
+  readonly address: Prisma.FieldRef<"SpaceBooking", 'String'>
   readonly locationType: Prisma.FieldRef<"SpaceBooking", 'LocationType'>
   readonly hallId: Prisma.FieldRef<"SpaceBooking", 'String'>
   readonly blocksHall: Prisma.FieldRef<"SpaceBooking", 'Boolean'>

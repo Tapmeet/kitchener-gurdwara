@@ -156,6 +156,7 @@ export const SpaceBookingScalarFieldEnum = {
   id: 'id',
   title: 'title',
   description: 'description',
+  address: 'address',
   locationType: 'locationType',
   hallId: 'hallId',
   blocksHall: 'blocksHall',

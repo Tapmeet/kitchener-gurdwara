@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { VENUE_TZ } from '@/lib/businessHours';
 import { formatInTimeZone } from 'date-fns-tz';
 import type { SpaceRecurrence } from '@/generated/prisma/client';
+import SpaceBookingLocationFields from '@/components/SpaceBookingLocationFields';
 
 function offsetStrToMinutes(off: string): number {
   // off like "+05:30" or "-04:00"
@@ -141,11 +142,27 @@ async function createSpaceBooking(formData: FormData) {
   const end = zonedLocalDateTimeToUtc(endDateStr, endTimeStr, VENUE_TZ);
   if (end <= start) return;
 
-  const blocksHall = formData.get('blocksHall') === 'on';
+  const locationTypeRaw = String(formData.get('locationType') ?? 'GURDWARA');
+  const locationType =
+    locationTypeRaw === 'OUTSIDE_GURDWARA' ? 'OUTSIDE_GURDWARA' : 'GURDWARA';
+
+  const address =
+    locationType === 'OUTSIDE_GURDWARA'
+      ? String(formData.get('address') ?? '').trim() || null
+      : null;
+
+  // Outside space bookings should not reserve halls
+  const blocksHall =
+    locationType === 'GURDWARA' ? formData.get('blocksHall') === 'on' : false;
+
   const isPublicTitle = formData.get('isPublicTitle') !== null;
-  const hallId = blocksHall
-    ? (formData.get('hallId') as string | null) || null
-    : null;
+
+  const hallId =
+    locationType === 'GURDWARA' && blocksHall
+      ? (formData.get('hallId') as string | null) || null
+      : null;
+
+  if (locationType === 'OUTSIDE_GURDWARA' && !address) return;
 
   const until =
     recurrence === 'ONCE' || !untilStr || !untilStr.trim()
@@ -156,7 +173,8 @@ async function createSpaceBooking(formData: FormData) {
     data: {
       title,
       description,
-      locationType: 'GURDWARA',
+      locationType,
+      address,
       blocksHall,
       isPublicTitle,
       start,
@@ -408,39 +426,7 @@ export default async function AdminSpaceBookingsPage() {
               Leave empty for no end date.
             </p>
           </div>
-
-          <div className='space-y-2'>
-            <label className='block text-sm font-medium'>
-              Hall reservation
-            </label>
-            <div className='space-y-2 text-sm'>
-              <label className='flex items-center gap-2'>
-                <input
-                  type='checkbox'
-                  name='blocksHall'
-                  defaultChecked
-                  className='rounded border-black/20'
-                />
-                <span>Reserve a specific hall for this time slot</span>
-              </label>
-              <select
-                name='hallId'
-                className='mt-1 w-full rounded-md border border-black/10 px-3 py-2 text-sm'
-                defaultValue=''
-              >
-                <option value=''>Choose hall…</option>
-                {halls.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name}
-                  </option>
-                ))}
-              </select>
-              <p className='text-xs text-gray-500'>
-                If you uncheck “Reserve hall”, this will still appear on the
-                calendar but all halls remain available for normal bookings.
-              </p>
-            </div>
-          </div>
+          <SpaceBookingLocationFields halls={halls} />
         </div>
 
         <div className='space-y-2'>
@@ -480,7 +466,7 @@ export default async function AdminSpaceBookingsPage() {
                 <tr className='border-b border-black/10 text-left text-xs uppercase tracking-wide text-gray-500'>
                   <th className='py-2 pr-3'>Title</th>
                   <th className='px-3 py-2'>Recurrence</th>
-                  <th className='px-3 py-2'>Hall</th>
+                  <th className='px-3 py-2'>Location</th>
                   <th className='px-3 py-2'>Public title</th>
                   <th className='px-3 py-2'>Active</th>
                   <th className='py-2 pl-3 text-right'>Actions</th>
@@ -512,9 +498,11 @@ export default async function AdminSpaceBookingsPage() {
                       )}
                     </td>
                     <td className='px-3 py-2'>
-                      {b.blocksHall
-                        ? b.hall?.name || 'Reserved (no hall selected)'
-                        : 'Does not reserve hall'}
+                      {b.locationType === 'OUTSIDE_GURDWARA'
+                        ? b.address || 'Outside (no address)'
+                        : b.blocksHall
+                          ? b.hall?.name || 'Reserved (no hall selected)'
+                          : 'Gurdwara (does not reserve hall)'}
                     </td>
                     <td className='px-3 py-2'>
                       {b.isPublicTitle ? 'Yes' : 'No'}

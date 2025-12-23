@@ -58,6 +58,7 @@ export default function CalendarView() {
         title: arg.event.title,
         description: arg.event.extendedProps?.description ?? null,
         locationType: arg.event.extendedProps?.locationType ?? 'GURDWARA',
+        address: arg.event.extendedProps?.address ?? null,
         hallName: arg.event.extendedProps?.hallName ?? null,
         blocksHall: !!arg.event.extendedProps?.blocksHall,
         recurrence: arg.event.extendedProps?.recurrence ?? 'ONCE',
@@ -307,20 +308,42 @@ export default function CalendarView() {
         )}
 
         {/* Calendar */}
-        <div className='mt-2 mb-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900'>
-          <span
-            className='mt-0.5 inline-flex h-3 w-3 flex-shrink-0 rounded-sm bg-emerald-400 shadow-inner'
-            aria-hidden='true'
-          />
-          <div>
-            <span className='block font-semibold'>
-              Special programs from Gurdwara Sahib
-            </span>
-            <span className='block'>
-              Look for the <span className='font-semibold'>green blocks</span>{' '}
-              in the calendar and tap/click them to see full details of GTSA
-              programs.
-            </span>
+        <div className='mt-2 mb-3 space-y-2'>
+          {/* Gurdwara (green) */}
+          <div className='flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900'>
+            <span
+              className='mt-0.5 inline-flex h-3 w-3 flex-shrink-0 rounded-sm bg-emerald-400 shadow-inner'
+              aria-hidden='true'
+            />
+            <div>
+              <span className='block font-semibold'>
+                Special programs from Gurdwara Sahib
+              </span>
+              <span className='block'>
+                Look for the <span className='font-semibold'>green blocks</span>{' '}
+                in the calendar and tap/click them to see full details of GTSA
+                programs.
+              </span>
+            </div>
+          </div>
+
+          {/* Outside Gurdwara (purple) */}
+          <div className='flex items-start gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900'>
+            <span
+              className='mt-0.5 inline-flex h-3 w-3 flex-shrink-0 rounded-sm bg-purple-400 shadow-inner'
+              aria-hidden='true'
+            />
+            <div>
+              <span className='block font-semibold'>
+                Programs outside Gurdwara Sahib
+              </span>
+              <span className='block'>
+                Look for the{' '}
+                <span className='font-semibold'>purple blocks</span> in the
+                calendar—these are programs happening outside GTSA. Tap/click to
+                see the location details.
+              </span>
+            </div>
           </div>
         </div>
 
@@ -489,6 +512,12 @@ export default function CalendarView() {
           .fancy-fc .fc-event.space-booking {
             background-color: #dcfce7; /* soft green */
             border-color: #bbf7d0;
+          }
+
+          /* Space bookings outside Gurdwara */
+          .fancy-fc .fc-event.space-booking.space-outside {
+            background-color: #f3e8ff; /* soft purple */
+            border-color: #ddd6fe;
           }
 
           /* Grid views */
@@ -667,11 +696,11 @@ export default function CalendarView() {
                     <div>
                       <div className='text-gray-500'>Location</div>
                       <div className='font-medium'>
-                        {detail.hallName
-                          ? detail.hallName
-                          : detail.locationType === 'GURDWARA'
-                            ? 'Gurdwara'
-                            : '—'}
+                        {detail.locationType === 'OUTSIDE_GURDWARA'
+                          ? detail.address || 'Outside (no address)'
+                          : detail.hallName
+                            ? detail.hallName
+                            : 'Gurdwara'}
                       </div>
                     </div>
                     <div>

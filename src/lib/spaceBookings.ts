@@ -13,6 +13,7 @@ export type SpaceBookingEvent = {
     kind: 'space';
     spaceBookingId: string;
     locationType: LocationType;
+    address: string | null;
     hallName: string | null;
     hallId: string | null;
     blocksHall: boolean;
@@ -29,6 +30,7 @@ type SpaceBookingTemplate = {
   title: string;
   description: string | null;
   locationType: LocationType;
+  address: string | null;
   hallId: string | null;
   hall: { id: string; name: string } | null;
   blocksHall: boolean;
@@ -85,11 +87,15 @@ function buildEvent(
     title: tpl.title,
     start: occStart,
     end: occEnd,
-    classNames: ['event-blue', 'space-booking'],
+    classNames: [
+      'space-booking',
+      tpl.locationType === 'OUTSIDE_GURDWARA' ? 'space-outside' : 'space-gurdwara',
+    ],
     extendedProps: {
       kind: 'space',
       spaceBookingId: tpl.id,
       locationType: tpl.locationType,
+      address: tpl.address ?? null,
       hallName: tpl.hall?.name ?? null,
       hallId: tpl.hall?.id ?? null,
       blocksHall: tpl.blocksHall,

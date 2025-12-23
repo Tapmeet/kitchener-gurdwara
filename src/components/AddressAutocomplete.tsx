@@ -7,12 +7,14 @@ type Props = {
   name?: string; // form field name for full address
   placeholder?: string;
   required?: boolean;
+  className?: string;
 };
 
 export default function AddressAutocomplete({
   name = 'address',
   placeholder = 'Please use auto complete and add address like 26 Periwinkle St, Kitchener, ON N2E 4C7, Canada',
   required,
+  className = 'input',
 }: Props) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
@@ -102,7 +104,7 @@ export default function AddressAutocomplete({
     <div className='space-y-1'>
       <input
         ref={inputRef}
-        className='input'
+        className={className}
         name={name}
         placeholder={placeholder}
         value={value}
