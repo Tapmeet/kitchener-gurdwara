@@ -1,7 +1,12 @@
 // src/lib/report-fairness.ts
 import { prisma } from '@/lib/db';
 import { startOfWeek, endOfWeek, subWeeks, isWithinInterval } from 'date-fns';
-import type { ProgramCategory, StaffSkill } from '@/generated/prisma/client';
+import {
+  AssignmentState,
+  BookingStatus,
+  ProgramCategory,
+  StaffSkill,
+} from '@/generated/prisma/client';
 
 export type Role = 'PATH' | 'KIRTAN';
 export type Jatha = 'A' | 'B';
@@ -37,6 +42,11 @@ export type ReportFilters = {
   q?: string; // name search (case-insensitive)
 };
 
+const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
+  BookingStatus.PENDING,
+  BookingStatus.CONFIRMED,
+];
+
 export async function buildFairnessReport(
   filters: ReportFilters = {}
 ): Promise<{ rows: StaffFairnessRow[]; windowStart: Date; windowEnd: Date }> {
@@ -53,7 +63,6 @@ export async function buildFairnessReport(
     startOfWeek(windowEnd, { weekStartsOn: 1 }),
     windowWeeks - 1
   );
-  // Example: windowWeeks=8 -> 8 weeks inclusive (current week + previous 7)
 
   // --- 2) Load active staff with filters ----------------------------------
   const staff = await prisma.staff.findMany({
@@ -78,10 +87,17 @@ export async function buildFairnessReport(
   const staffIds = staff.map((s) => s.id);
   if (!staffIds.length) return { rows: [], windowStart, windowEnd };
 
-  // --- 3) Pull assignments (all-time) for those staff ---------------------
+  // --- 3) Pull assignments (confirmed + active bookings only) -------------
   const asgn = await prisma.bookingAssignment.findMany({
     where: {
       staffId: { in: staffIds },
+
+      // ✅ fairness credits should reflect real work only
+      state: AssignmentState.CONFIRMED,
+
+      // ✅ ignore cancelled/expired bookings in fairness report
+      booking: { status: { in: ACTIVE_BOOKING_STATUSES } },
+
       ...(filters.role
         ? {
             bookingItem: {
@@ -94,6 +110,7 @@ export async function buildFairnessReport(
     },
     select: {
       staffId: true,
+      start: true,
       booking: { select: { start: true } },
       bookingItem: {
         select: {
@@ -108,6 +125,7 @@ export async function buildFairnessReport(
         },
       },
     },
+
     orderBy: [{ booking: { start: 'asc' } }],
   });
 
@@ -136,7 +154,11 @@ export async function buildFairnessReport(
     const s = byStaff[row.staffId];
     if (!s) continue;
 
-    const when = row.booking?.start ? new Date(row.booking.start) : null;
+    const when = row.start
+      ? new Date(row.start)
+      : row.booking?.start
+        ? new Date(row.booking.start)
+        : null;
     const p = row.bookingItem.programType;
     const weight = p.compWeight ?? 1;
 
@@ -147,7 +169,7 @@ export async function buildFairnessReport(
     // Lifetime credits
     s.creditsTotal += weight;
 
-    // In-window? (inclusive of both start & end)
+    // In-window?
     const inWindow =
       !!when &&
       isWithinInterval(when, {
@@ -193,7 +215,7 @@ export async function buildFairnessReport(
         b.creditsWindow - a.creditsWindow || b.creditsTotal - a.creditsTotal
     );
 
-    row.programs = programs; // all programs, not sliced
+    row.programs = programs;
   }
 
   // --- 7) Sort staff: heaviest first by window credits (then lifetime) ----

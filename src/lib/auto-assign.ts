@@ -356,10 +356,14 @@ export async function autoAssignForBooking(
       const { jatha, memberIds } = await pickJathaForWindow(start, end);
 
       if (jatha && memberIds.length >= JATHA_SIZE) {
-        // ===== IDEAL CASE: fixed jatha for whole Akhand (old behaviour) =====
-        const orderedJ = (await orderByWeightedLoad(memberIds, 'KIRTAN')).slice(
-          0,
-          JATHA_SIZE
+        // ===== IDEAL CASE: fixed jatha for whole Akhand (but PATH-safe) =====
+
+        // Keep the “picked jatha” idea, but don’t use KIRTAN-only people for PATH windows.
+        // Build a PATH-capable pool from the same jatha (ordered by PATH load).
+        const jathaPathPool = await availableJathaPathMembers(
+          jatha,
+          start,
+          end
         );
 
         // pathi: prefer PATH-only; if none available, borrow PATH-capable from same jatha
@@ -370,18 +374,22 @@ export async function autoAssignForBooking(
             'PATH'
           )
         )[0];
+
         let pathi = pathiFromOnly;
         if (!pathi) {
-          const jathaPath = await availableJathaPathMembers(jatha, start, end);
-          pathi = jathaPath[0];
+          pathi = jathaPathPool[0];
         }
+
         if (!pathi) {
           shortages.push({ itemId: item.id, role: 'PATH', needed: 1 });
           continue;
         }
 
-        // Fixed rotation team with unique members
-        const team = Array.from(new Set([pathi, ...orderedJ]));
+        // Rotation team = only PATH-capable people (plus pathi), no KIRTAN-only members.
+        const team = Array.from(new Set([pathi, ...jathaPathPool])).filter(
+          Boolean
+        ) as string[];
+
         pickedJathaOverall = pickedJathaOverall ?? jatha;
 
         // 1) PATH rotations from [start, closingStart)
@@ -399,11 +407,10 @@ export async function autoAssignForBooking(
 
         // 2) Closing double PATH: two people on [closingStart, pathEnd)
         if (closingMinutes > 0 && closingStart < pathEnd) {
-          const secondPref = orderedJ[0];
           const second =
-            secondPref && secondPref !== pathi
-              ? secondPref
-              : (orderedJ[1] ?? team[1]);
+            jathaPathPool.find((id) => id !== pathi) ??
+            team.find((id) => id !== pathi);
+
           const closingPair = [pathi, second].filter(Boolean) as string[];
 
           if (closingPair.length < 2) {
@@ -413,17 +420,7 @@ export async function autoAssignForBooking(
               needed: 2 - closingPair.length,
             });
           } else {
-            await prisma.bookingAssignment.createMany({
-              data: closingPair.map((staffId) => ({
-                bookingId: thisBookingId,
-                bookingItemId: item.id,
-                staffId,
-                start: closingStart,
-                end: pathEnd,
-                state: 'PROPOSED',
-              })),
-              skipDuplicates: true,
-            });
+            await commit(item.id, closingPair, closingStart, pathEnd);
           }
         }
 
@@ -443,13 +440,10 @@ export async function autoAssignForBooking(
                 needed: shortage,
               });
             }
-            // track the jatha we used if any
             pickedJathaOverall =
               pickedJathaOverall ?? tailJatha ?? jatha ?? null;
-
             await commit(item.id, picks, pathEnd, end);
           } else {
-            // nobody free for that last Kirtan hour
             shortages.push({
               itemId: item.id,
               role: 'KIRTAN',
@@ -661,7 +655,7 @@ export async function autoAssignForBooking(
             closingStart,
             pathEnd,
             needDouble,
-            new Set<string>()
+            new Set<string>(reservedConcurrent) // ✅ prevents KIRTAN+PATH overlap
           );
           if (shortage > 0) {
             shortages.push({ itemId: item.id, role: 'PATH', needed: shortage });
