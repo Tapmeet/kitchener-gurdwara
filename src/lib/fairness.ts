@@ -81,8 +81,12 @@ export async function weightedLoadByStaff(
 ) {
   if (!staffIds.length) return new Map<string, number>();
 
-  const end = endOfWeek(new Date(), { weekStartsOn: 1 });
-  const start = subWeeks(startOfWeek(end, { weekStartsOn: 1 }), windowWeeks);
+  // ✅ match report-fairness window semantics (inclusive week count)
+  const windowEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
+  const windowStart = subWeeks(
+    startOfWeek(windowEnd, { weekStartsOn: 1 }),
+    Math.max(0, windowWeeks - 1)
+  );
 
   const rows = await prisma.bookingAssignment.findMany({
     where: {
@@ -95,12 +99,14 @@ export async function weightedLoadByStaff(
       booking: { status: { in: ACTIVE_BOOKING_STATUSES } },
 
       OR: [
-        { AND: [{ start: { lt: end } }, { end: { gt: start } }] },
+        // Count any windowed shift that OVERLAPS [windowStart, windowEnd)
+        { AND: [{ start: { lt: windowEnd } }, { end: { gt: windowStart } }] },
+        // Count unwindowed rows by the booking overlap
         {
           AND: [
             { start: null },
             { end: null },
-            { booking: { start: { lt: end }, end: { gt: start } } },
+            { booking: { start: { lt: windowEnd }, end: { gt: windowStart } } },
           ],
         },
       ],
@@ -161,14 +167,17 @@ export async function pickJathaForSlot(
       orderByWeightedLoad(aFree, 'KIRTAN'),
       orderByWeightedLoad(bFree, 'KIRTAN'),
     ]);
+
     const aLoads = await weightedLoadByStaff(aOrdered.slice(0, 3), 8, 'KIRTAN');
     const bLoads = await weightedLoadByStaff(bOrdered.slice(0, 3), 8, 'KIRTAN');
+
     const aSum = aOrdered
       .slice(0, 3)
       .reduce((s, id) => s + (aLoads.get(id) ?? 0), 0);
     const bSum = bOrdered
       .slice(0, 3)
       .reduce((s, id) => s + (bLoads.get(id) ?? 0), 0);
+
     if (aSum < bSum) return 'A';
     if (bSum < aSum) return 'B';
   }

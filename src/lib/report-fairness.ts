@@ -50,7 +50,6 @@ const ACTIVE_BOOKING_STATUSES: BookingStatus[] = [
 export async function buildFairnessReport(
   filters: ReportFilters = {}
 ): Promise<{ rows: StaffFairnessRow[]; windowStart: Date; windowEnd: Date }> {
-  // --- 1) Window calculation ----------------------------------------------
   const wwRaw = filters.windowWeeks;
   const windowWeeks =
     typeof wwRaw === 'number' && Number.isFinite(wwRaw) && wwRaw > 0
@@ -58,13 +57,12 @@ export async function buildFairnessReport(
       : 8;
 
   const today = new Date();
-  const windowEnd = endOfWeek(today, { weekStartsOn: 1 }); // Sun (Mon-start week)
+  const windowEnd = endOfWeek(today, { weekStartsOn: 1 });
   const windowStart = subWeeks(
     startOfWeek(windowEnd, { weekStartsOn: 1 }),
     windowWeeks - 1
   );
 
-  // --- 2) Load active staff with filters ----------------------------------
   const staff = await prisma.staff.findMany({
     where: {
       isActive: true,
@@ -87,7 +85,6 @@ export async function buildFairnessReport(
   const staffIds = staff.map((s) => s.id);
   if (!staffIds.length) return { rows: [], windowStart, windowEnd };
 
-  // --- 3) Pull assignments (confirmed + active bookings only) -------------
   const asgn = await prisma.bookingAssignment.findMany({
     where: {
       staffId: { in: staffIds },
@@ -101,9 +98,7 @@ export async function buildFairnessReport(
       ...(filters.role
         ? {
             bookingItem: {
-              programType: {
-                category: filters.role as ProgramCategory,
-              },
+              programType: { category: filters.role as ProgramCategory },
             },
           }
         : {}),
@@ -115,21 +110,14 @@ export async function buildFairnessReport(
       bookingItem: {
         select: {
           programType: {
-            select: {
-              id: true,
-              name: true,
-              category: true,
-              compWeight: true,
-            },
+            select: { id: true, name: true, category: true, compWeight: true },
           },
         },
       },
     },
-
     orderBy: [{ booking: { start: 'asc' } }],
   });
 
-  // --- 4) Pre-index staff rows --------------------------------------------
   const byStaff: Record<string, StaffFairnessRow> = {};
   for (const s of staff) {
     byStaff[s.id] = {
@@ -146,10 +134,8 @@ export async function buildFairnessReport(
     };
   }
 
-  // Program stats keyed by staff -> programId
   const progMap: Record<string, Record<string, ProgramBreakdown>> = {};
 
-  // --- 5) Aggregate credits & program breakdown ---------------------------
   for (const row of asgn) {
     const s = byStaff[row.staffId];
     if (!s) continue;
@@ -159,6 +145,7 @@ export async function buildFairnessReport(
       : row.booking?.start
         ? new Date(row.booking.start)
         : null;
+
     const p = row.bookingItem.programType;
     const weight = p.compWeight ?? 1;
 
@@ -166,10 +153,8 @@ export async function buildFairnessReport(
       s.lastAssignedAt = when;
     }
 
-    // Lifetime credits
     s.creditsTotal += weight;
 
-    // In-window?
     const inWindow =
       !!when &&
       isWithinInterval(when, {
@@ -177,9 +162,7 @@ export async function buildFairnessReport(
         end: windowEnd,
       });
 
-    if (inWindow) {
-      s.creditsWindow += weight;
-    }
+    if (inWindow) s.creditsWindow += weight;
 
     if (!progMap[s.staffId]) progMap[s.staffId] = {};
     if (!progMap[s.staffId][p.id]) {
@@ -194,8 +177,8 @@ export async function buildFairnessReport(
         creditsWindow: 0,
       };
     }
-    const pb = progMap[s.staffId][p.id];
 
+    const pb = progMap[s.staffId][p.id];
     pb.countTotal += 1;
     pb.creditsTotal += weight;
 
@@ -205,7 +188,6 @@ export async function buildFairnessReport(
     }
   }
 
-  // --- 6) Attach program breakdown, sorted by window credits --------------
   for (const s of staff) {
     const row = byStaff[s.id];
     const programs = progMap[s.id] ? Object.values(progMap[s.id]) : [];
@@ -218,7 +200,6 @@ export async function buildFairnessReport(
     row.programs = programs;
   }
 
-  // --- 7) Sort staff: heaviest first by window credits (then lifetime) ----
   const rows = Object.values(byStaff).sort(
     (a, b) =>
       b.creditsWindow - a.creditsWindow || b.creditsTotal - a.creditsTotal
