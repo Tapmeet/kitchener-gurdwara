@@ -7,14 +7,15 @@ import { fmtInVenue, DATE_TIME_FMT } from '@/lib/time';
 const ENABLED = process.env.ASSIGN_NOTIFICATIONS === '1';
 const CHANNELS = (process.env.ASSIGN_NOTIFY_CHANNELS || 'both').toLowerCase();
 
-// Env detection
+// Env detection (STRICT)
+// Only treat as "real production" when running on Vercel in production.
+// Prevents local `next start` (NODE_ENV=production) from sending.
+const VERCEL = process.env.VERCEL === '1';
 const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
-const NODE_ENV = process.env.NODE_ENV;
-const isProdEnv =
-  VERCEL_ENV === 'production' || (!VERCEL_ENV && NODE_ENV === 'production');
-const isLocalDev = NODE_ENV === 'development' && !VERCEL_ENV;
+const isProdEnv = VERCEL && VERCEL_ENV === 'production';
+const isLocalRuntime = !VERCEL;
 
-// Optional dev override (only for real local dev if you ever want it)
+// Optional dev override (only for local runtime if you ever want it)
 const ALLOW_IN_DEV = process.env.ASSIGN_NOTIFY_IN_DEV === '1';
 
 const canEmail = CHANNELS === 'email' || CHANNELS === 'both';
@@ -23,12 +24,15 @@ const canSms = CHANNELS === 'sms' || CHANNELS === 'both';
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
+
 const fromEmail =
   process.env.BOOKINGS_FROM_EMAIL || 'Gurdwara <noreply@example.com>';
+
 const twilioClient =
   process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
     : null;
+
 const smsFrom = process.env.TWILIO_SMS_FROM || '';
 const CONTACT_NAME = process.env.ASSIGN_NOTIFY_CONTACT_NAME || 'Manjot Singh';
 const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+15144586202';
@@ -36,13 +40,13 @@ const CONTACT_PHONE = process.env.ASSIGN_NOTIFY_CONTACT_PHONE || '+15144586202';
 function okToSend() {
   if (!ENABLED) return false;
 
-  // Only send in real production…
+  // Only send in real Vercel production
   if (isProdEnv) return true;
 
-  // …optionally allow *local* dev if you explicitly turn it on
-  if (isLocalDev && ALLOW_IN_DEV) return true;
+  // Optionally allow local testing only if explicitly enabled
+  if (isLocalRuntime && ALLOW_IN_DEV) return true;
 
-  // No notifications in preview or normal dev by default
+  // No notifications in preview/dev/local by default
   return false;
 }
 
@@ -139,11 +143,8 @@ export async function notifyAssignmentsStaff(
       continue;
     }
 
-    const subject = `Seva assignment – ${booking.title} (${fmt(
-      booking.start
-    )})`;
+    const subject = `Seva assignment – ${booking.title} (${fmt(booking.start)})`;
 
-    // contact line used in both email + SMS
     const contactLine = CONTACT_PHONE
       ? `If you cannot attend, please contact ${CONTACT_NAME} at ${CONTACT_PHONE}.`
       : `If you cannot attend, please contact ${CONTACT_NAME}.`;
@@ -199,12 +200,12 @@ export async function notifyAssignmentsStaff(
     }
 
     if (canSms && twilioClient && hasSms) {
-      if (!smsFrom)
+      if (!smsFrom) {
         console.warn(
           'ASSIGN_NOTIFY: TWILIO_SMS_FROM is empty; skipping SMS for',
           phone
         );
-      else {
+      } else {
         try {
           await twilioClient.messages.create({
             from: smsFrom,

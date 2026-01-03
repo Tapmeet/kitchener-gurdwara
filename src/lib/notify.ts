@@ -1,4 +1,4 @@
-// lib/notify.ts
+// src/lib/notify.ts
 import twilio from 'twilio';
 import 'server-only';
 
@@ -81,6 +81,31 @@ function fmtPrograms(programs?: EmailProgramSummary[]) {
 const resendKey = process.env.RESEND_API_KEY;
 const resendFrom = process.env.BOOKINGS_FROM_EMAIL;
 
+// ---- Environment / notification gating ----
+// By default, booking emails/SMS should NOT go out in dev/preview/local.
+// Use BOOKING_NOTIFICATIONS_ENABLED=0 to disable everywhere.
+// Use BOOKING_NOTIFY_IN_DEV=1 to explicitly allow sending in local runtime (only).
+const VERCEL = process.env.VERCEL === '1';
+const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
+const NODE_ENV = process.env.NODE_ENV;
+
+// "Real prod" means: running on Vercel production
+const isProdEnv = VERCEL && VERCEL_ENV === 'production';
+
+// Local machine / non-vercel runtime (next dev OR next start locally)
+const isLocalRuntime = !VERCEL;
+
+const bookingNotificationsEnabled =
+  process.env.BOOKING_NOTIFICATIONS_ENABLED !== '0';
+const allowInDev = process.env.BOOKING_NOTIFY_IN_DEV === '1';
+
+function okToSendBookingNotifications() {
+  if (!bookingNotificationsEnabled) return false;
+  if (isProdEnv) return true;
+  if (isLocalRuntime && allowInDev) return true;
+  return false;
+}
+
 export const NOTIFY = Object.freeze({
   adminInbox: process.env.BOOKINGS_INBOX_EMAIL ?? '',
 });
@@ -133,7 +158,19 @@ export async function sendEmail(opts: {
   subject: string;
   html: string;
 }): Promise<{ id?: string }> {
-  // Fail loudly so you see it in logs, rather than silently skipping
+  // Never send booking email outside prod unless explicitly allowed.
+  if (!okToSendBookingNotifications()) {
+    console.log('[notify] Email suppressed (non-prod or disabled)', {
+      VERCEL,
+      VERCEL_ENV,
+      NODE_ENV,
+      bookingNotificationsEnabled,
+      allowInDev,
+    });
+    return { id: 'dry-run' };
+  }
+
+  // Fail loudly in production so you see it in logs, rather than silently skipping
   if (!resendKey) throw new Error('RESEND_API_KEY is missing');
   if (!resendFrom) throw new Error('BOOKINGS_FROM_EMAIL is missing');
 
@@ -167,14 +204,12 @@ export async function sendEmail(opts: {
     const body = await res.json().catch(() => null);
 
     if (!res.ok) {
-      // Surface the exact failure (401 bad key, 403 domain not verified, 422 invalid "from"/"to", etc.)
       throw new Error(
         `Resend failed ${res.status} ${res.statusText}: ${JSON.stringify(body)}`
       );
     }
     return { id: (body as any)?.id };
   } catch (err: any) {
-    // Log once with full detail, then bubble up so API route can decide to ignore or handle
     console.error('Resend email error:', err?.message ?? err);
     throw err;
   } finally {
@@ -190,8 +225,21 @@ export async function sendSms({
   toE164: string;
   text: string;
 }): Promise<void> {
+  // Never send booking SMS outside prod unless explicitly allowed.
+  if (!okToSendBookingNotifications()) {
+    console.log('[notify] SMS suppressed (non-prod or disabled)', {
+      VERCEL,
+      VERCEL_ENV,
+      NODE_ENV,
+      bookingNotificationsEnabled,
+      allowInDev,
+    });
+    return;
+  }
+
   // Preserve format EXACTLY as passed in `text`
   if (!twilioClient || !twilioSmsFrom) return;
+
   // Normalize recipient (trim spaces) but require valid E.164
   const to = toE164.replace(/\s+/g, '');
   if (!isE164(to)) {
@@ -207,7 +255,6 @@ export async function sendSms({
       body: text,
     });
   } catch (err: any) {
-    // Don’t break booking flow — just log
     console.error('Twilio SMS failed (ignored):', {
       status: err?.status,
       code: err?.code,
