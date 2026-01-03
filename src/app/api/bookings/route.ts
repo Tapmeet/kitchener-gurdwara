@@ -144,6 +144,25 @@ function rangeForWindows(
   return { start: new Date(min), end: new Date(max) };
 }
 
+function padWindow(
+  w: TimeWindow,
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA',
+  outsideBufferMs: number
+): TimeWindow {
+  if (locationType !== 'OUTSIDE_GURDWARA') return w;
+  return {
+    start: new Date(w.start.getTime() - outsideBufferMs),
+    end: new Date(w.end.getTime() + outsideBufferMs),
+  };
+}
+
+function intersectWindow(a: TimeWindow, b: TimeWindow): TimeWindow | null {
+  const s = a.start > b.start ? a.start : b.start;
+  const e = a.end < b.end ? a.end : b.end;
+  if (e <= s) return null;
+  return { start: s, end: e };
+}
+
 const VERCEL_ENV = process.env.VERCEL_ENV; // 'preview' | 'production' | undefined
 const NODE_ENV = process.env.NODE_ENV;
 
@@ -588,31 +607,23 @@ export async function POST(req: Request) {
       });
     }
 
-    // Outside buffer (travel) for non-Sehaj fallback math
-    const candStart =
-      input.locationType === 'OUTSIDE_GURDWARA'
-        ? new Date(start.getTime() - OUTSIDE_BUFFER_MS)
-        : start;
-    const candEnd =
-      input.locationType === 'OUTSIDE_GURDWARA'
-        ? new Date(end.getTime() + OUTSIDE_BUFFER_MS)
-        : end;
+    // ✅ Capacity windows:
+    // - Sehaj-only: check staffing only for start + end windows (not the whole multi-day span)
+    // - Normal: check the whole window
+    const effectiveWindows: TimeWindow[] = isSehajBooking
+      ? (sehajWindows as TimeWindow[])
+      : [{ start, end }];
 
-    // ✅ Use Sehaj windows for hours (start/end only) and ALSO tighten overlap query range
-    const queryRange = isSehajBooking
-      ? rangeForWindows(sehajWindows!, input.locationType, OUTSIDE_BUFFER_MS)
-      : null;
+    // Apply outside travel buffer per window (used for staff capacity)
+    const candidateWindows = effectiveWindows.map((w) =>
+      padWindow(w, input.locationType as any, OUTSIDE_BUFFER_MS)
+    );
 
-    const overlapStart = queryRange?.start ?? candStart;
-    const overlapEnd = queryRange?.end ?? candEnd;
+    const hoursByWindow = candidateWindows.map((w) =>
+      hourSpan(w.start, w.end).filter((h) => BUSINESS_HOURS_24.includes(h))
+    );
 
-    const hours = isSehajBooking
-      ? hoursForWindows(sehajWindows!, input.locationType, OUTSIDE_BUFFER_MS)
-      : hourSpan(candStart, candEnd).filter((h) =>
-          BUSINESS_HOURS_24.includes(h)
-        );
-
-    if (!hours.length) {
+    if (hoursByWindow.some((hrs) => !hrs.length)) {
       return NextResponse.json(
         { error: 'Selected time is outside business hours.' },
         { status: 400 }
@@ -621,153 +632,163 @@ export async function POST(req: Request) {
 
     // ————— Transaction: capacity compute + create —————
     const created: CreatedBooking = await prisma.$transaction(async (tx) => {
-      // Build used-per-hour per location from overlaps (with outside buffer)
-      const overlapBookings = await tx.booking.findMany({
-        where: {
-          start: { lt: overlapEnd },
-          end: { gt: overlapStart },
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-        include: {
-          items: {
+      // ✅ Capacity check
+      // For Sehaj, we evaluate overlaps PER window (start/end) so bookings "in between"
+      // do NOT incorrectly count against Sehaj staffing.
+      if (!isLongPath) {
+        const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
+        const totalPool = await getTotalPoolPerRole(); // total active staff by role
+        const locMax = getMaxPerLocationPerRole(input.locationType);
+
+        for (let wi = 0; wi < candidateWindows.length; wi++) {
+          const win = candidateWindows[wi];
+          const hours = hoursByWindow[wi] ?? [];
+          if (!hours.length) continue;
+
+          const overlapBookings = await tx.booking.findMany({
+            where: {
+              start: { lt: win.end },
+              end: { gt: win.start },
+              status: { in: ['PENDING', 'CONFIRMED'] },
+            },
             include: {
-              programType: {
-                select: {
-                  name: true, // ✅ needed to detect Sehaj windows in overlaps
-                  minPathers: true,
-                  minKirtanis: true,
-                  peopleRequired: true,
-                  durationMinutes: true,
-                  category: true,
+              items: {
+                include: {
+                  programType: {
+                    select: {
+                      name: true,
+                      minPathers: true,
+                      minKirtanis: true,
+                      peopleRequired: true,
+                      durationMinutes: true,
+                      category: true,
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      });
+          });
 
-      const usedGW: Record<number, RoleVector> = {};
-      const usedOUT: Record<number, RoleVector> = {};
-      for (const h of BUSINESS_HOURS_24) {
-        usedGW[h] = { PATH: 0, KIRTAN: 0 };
-        usedOUT[h] = { PATH: 0, KIRTAN: 0 };
-      }
-      const usedHeadGW: Record<number, number> = {};
-      const usedHeadOUT: Record<number, number> = {};
-      for (const h of BUSINESS_HOURS_24) {
-        usedHeadGW[h] = 0;
-        usedHeadOUT[h] = 0;
-      }
+          const usedGW: Record<number, RoleVector> = {};
+          const usedOUT: Record<number, RoleVector> = {};
+          const usedHeadGW: Record<number, number> = {};
+          const usedHeadOUT: Record<number, number> = {};
+          for (const h of BUSINESS_HOURS_24) {
+            usedGW[h] = { PATH: 0, KIRTAN: 0 };
+            usedOUT[h] = { PATH: 0, KIRTAN: 0 };
+            usedHeadGW[h] = 0;
+            usedHeadOUT[h] = 0;
+          }
 
-      for (const b of overlapBookings) {
-        const vec = b.items.reduce(
-          (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
-          { PATH: 0, KIRTAN: 0 }
-        );
+          for (const b of overlapBookings) {
+            const vec = b.items.reduce(
+              (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
+              { PATH: 0, KIRTAN: 0 }
+            );
 
-        const headForBooking = b.items
-          .map((it: any) => {
-            const pt: any = it.programType;
-            const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+            const headForBooking = b.items
+              .map((it: any) => {
+                const pt: any = it.programType;
+                const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
 
-            // ✅ IMPORTANT: Exclude Sehaj from Akhand long-path headcount shortcut.
-            const isLongPathItem =
-              pt.category === ProgramCategory.PATH &&
-              !isSehajName(pt.name) &&
-              (pt.durationMinutes ?? 0) >= 36 * 60 &&
-              (pt.minKirtanis ?? 0) === 0;
+                // ✅ IMPORTANT: Exclude Sehaj from Akhand long-path headcount shortcut.
+                const isLongPathItem =
+                  pt.category === ProgramCategory.PATH &&
+                  !isSehajName(pt.name) &&
+                  (pt.durationMinutes ?? 0) >= 36 * 60 &&
+                  (pt.minKirtanis ?? 0) === 0;
 
-            if (isLongPathItem) {
-              return Math.max(minSum, 1);
+                if (isLongPathItem) {
+                  return Math.max(minSum, 1);
+                }
+
+                return Math.max(pt.peopleRequired ?? 0, minSum);
+              })
+              .reduce((a: number, bb: number) => a + bb, 0);
+
+            const s = new Date(b.start);
+            const e = new Date(b.end);
+
+            // ✅ If the existing booking is Sehaj-only, it only consumes hours at its windows
+            const bWindows = hallWindowsForPrograms(
+              (b.items ?? []).map((it: any) => ({
+                name: it.programType?.name,
+              })),
+              s,
+              e
+            ) ?? [{ start: s, end: e }];
+
+            for (const bw of bWindows) {
+              const paddedBw = padWindow(
+                bw,
+                b.locationType as any,
+                OUTSIDE_BUFFER_MS
+              );
+              const inter = intersectWindow(paddedBw, win);
+              if (!inter) continue;
+
+              const hrs = hourSpan(inter.start, inter.end).filter((h) =>
+                BUSINESS_HOURS_24.includes(h)
+              );
+
+              for (const h of hrs) {
+                if (b.locationType === 'GURDWARA') {
+                  usedGW[h].PATH += vec.PATH ?? 0;
+                  usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
+                  usedHeadGW[h] += headForBooking;
+                } else {
+                  usedOUT[h].PATH += vec.PATH ?? 0;
+                  usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
+                  usedHeadOUT[h] += headForBooking;
+                }
+              }
+            }
+          }
+
+          // Ensure capacity exists each hour in this window
+          for (const h of hours) {
+            for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
+              const total = totalPool[r] ?? 0;
+              const usedOpp =
+                input.locationType === 'GURDWARA'
+                  ? (usedOUT[h][r] ?? 0)
+                  : (usedGW[h][r] ?? 0);
+              const usedHere =
+                input.locationType === 'GURDWARA'
+                  ? (usedGW[h][r] ?? 0)
+                  : (usedOUT[h][r] ?? 0);
+
+              // Shared pool vs per-location cap
+              const sharedLimit = Math.max(0, total - usedOpp);
+              const locLimit = Math.min(
+                sharedLimit,
+                (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+              );
+
+              const remaining = Math.max(0, locLimit - usedHere);
+              const need = (required[r] ?? 0) as number;
+              if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
             }
 
-            return Math.max(pt.peopleRequired ?? 0, minSum);
-          })
-          .reduce((a: number, bb: number) => a + bb, 0);
-
-        const s = new Date(b.start);
-        const e = new Date(b.end);
-
-        const paddedStart =
-          b.locationType === 'OUTSIDE_GURDWARA'
-            ? new Date(s.getTime() - OUTSIDE_BUFFER_MS)
-            : s;
-        const paddedEnd =
-          b.locationType === 'OUTSIDE_GURDWARA'
-            ? new Date(e.getTime() + OUTSIDE_BUFFER_MS)
-            : e;
-
-        // ✅ If the existing booking is Sehaj-only, it should only consume hours at its windows
-        const bWindows = hallWindowsForPrograms(
-          b.items.map((it: any) => ({ name: it.programType?.name })),
-          s,
-          e
-        );
-
-        const hrs = bWindows
-          ? hoursForWindows(bWindows, b.locationType as any, OUTSIDE_BUFFER_MS)
-          : hourSpan(paddedStart, paddedEnd).filter((h) =>
-              BUSINESS_HOURS_24.includes(h)
+            // Headcount guard
+            const usedOppHead =
+              input.locationType === 'GURDWARA'
+                ? usedHeadOUT[h]
+                : usedHeadGW[h];
+            const usedHereHead =
+              input.locationType === 'GURDWARA'
+                ? usedHeadGW[h]
+                : usedHeadOUT[h];
+            const remainingHead = Math.max(
+              0,
+              totalUniqueStaff - usedOppHead - usedHereHead
             );
-
-        for (const h of hrs) {
-          if (b.locationType === 'GURDWARA') {
-            usedGW[h].PATH += vec.PATH ?? 0;
-            usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
-            usedHeadGW[h] += headForBooking;
-          } else {
-            usedOUT[h].PATH += vec.PATH ?? 0;
-            usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
-            usedHeadOUT[h] += headForBooking;
+            if (remainingHead < headcountRequired)
+              throw new Error('CAPACITY_EXCEEDED');
           }
         }
       }
-
-      // Pools & per-location limits
-      const totalUniqueStaff = await getTotalUniqueStaffCount(); // unique humans
-      const totalPool = await getTotalPoolPerRole(); // total active staff by role
-      const locMax = getMaxPerLocationPerRole(input.locationType);
-
-      // Ensure capacity exists each hour
-      for (const h of hours) {
-        if (!isLongPath) {
-          for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
-            const total = totalPool[r] ?? 0;
-            const usedOpp =
-              input.locationType === 'GURDWARA'
-                ? (usedOUT[h][r] ?? 0)
-                : (usedGW[h][r] ?? 0);
-            const usedHere =
-              input.locationType === 'GURDWARA'
-                ? (usedGW[h][r] ?? 0)
-                : (usedOUT[h][r] ?? 0);
-
-            // Shared pool vs per-location cap
-            const sharedLimit = Math.max(0, total - usedOpp);
-            const locLimit = Math.min(
-              sharedLimit,
-              (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
-            );
-
-            const remaining = Math.max(0, locLimit - usedHere);
-            const need = (required[r] ?? 0) as number;
-            if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
-          }
-
-          // Headcount guard
-          const usedOppHead =
-            input.locationType === 'GURDWARA' ? usedHeadOUT[h] : usedHeadGW[h];
-          const usedHereHead =
-            input.locationType === 'GURDWARA' ? usedHeadGW[h] : usedHeadOUT[h];
-          const remainingHead = Math.max(
-            0,
-            totalUniqueStaff - usedOppHead - usedHereHead
-          );
-          if (remainingHead < headcountRequired)
-            throw new Error('CAPACITY_EXCEEDED');
-        }
-        // Long path: skip staff pool/headcount checks; we just hold the slot/hall.
-      }
+      // Long path: skip staff pool/headcount checks; we just hold the slot/hall.
 
       // after you resolve `session`, before tx.booking.create(...)
       let createdByData: Record<string, any> = {};

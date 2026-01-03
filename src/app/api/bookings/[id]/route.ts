@@ -136,6 +136,25 @@ function rangeForWindows(
   return { start: new Date(min), end: new Date(max) };
 }
 
+function padWindow(
+  w: TimeWindow,
+  locationType: 'GURDWARA' | 'OUTSIDE_GURDWARA',
+  outsideBufferMs: number
+): TimeWindow {
+  if (locationType !== 'OUTSIDE_GURDWARA') return w;
+  return {
+    start: new Date(w.start.getTime() - outsideBufferMs),
+    end: new Date(w.end.getTime() + outsideBufferMs),
+  };
+}
+
+function intersectWindow(a: TimeWindow, b: TimeWindow): TimeWindow | null {
+  const s = a.start > b.start ? a.start : b.start;
+  const e = a.end < b.end ? a.end : b.end;
+  if (e <= s) return null;
+  return { start: s, end: e };
+}
+
 function isBusinessStartHourTZ(d: Date) {
   const hourStr = new Intl.DateTimeFormat('en-CA', {
     hour: '2-digit',
@@ -331,6 +350,7 @@ export async function PATCH(
 
         const isLongPathItem =
           p.category === ProgramCategory.PATH &&
+          !isSehajName(p.name) &&
           (p.durationMinutes ?? 0) >= 36 * 60 &&
           (p.minKirtanis ?? 0) === 0;
 
@@ -513,37 +533,18 @@ export async function PATCH(
     }
 
     // --- Capacity + headcount (excluding this booking itself) ---
-    const effectiveWindows =
+    const effectiveWindows: TimeWindow[] =
       isSehajOnly && sehajWindows?.length ? sehajWindows : [{ start, end }];
 
-    const candStart =
-      booking.locationType === 'OUTSIDE_GURDWARA'
-        ? new Date(start.getTime() - OUTSIDE_BUFFER_MS)
-        : start;
-    const candEnd =
-      booking.locationType === 'OUTSIDE_GURDWARA'
-        ? new Date(end.getTime() + OUTSIDE_BUFFER_MS)
-        : end;
-
-    const queryRange =
-      isSehajOnly && sehajWindows?.length
-        ? rangeForWindows(
-            sehajWindows,
-            booking.locationType as any,
-            OUTSIDE_BUFFER_MS
-          )
-        : null;
-
-    const overlapStart = queryRange?.start ?? candStart;
-    const overlapEnd = queryRange?.end ?? candEnd;
-
-    const hours = hoursForWindows(
-      effectiveWindows,
-      booking.locationType as any,
-      OUTSIDE_BUFFER_MS
+    const candidateWindows = effectiveWindows.map((w) =>
+      padWindow(w, booking.locationType as any, OUTSIDE_BUFFER_MS)
     );
 
-    if (!hours.length) {
+    const hoursByWindow = candidateWindows.map((w) =>
+      hourSpan(w.start, w.end).filter((h) => BUSINESS_HOURS_24.includes(h))
+    );
+
+    if (hoursByWindow.some((hrs) => !hrs.length)) {
       return NextResponse.json(
         { error: 'Selected time is outside business hours.' },
         { status: 400 }
@@ -551,138 +552,154 @@ export async function PATCH(
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const overlaps = await tx.booking.findMany({
-        where: {
-          id: { not: booking.id }, // exclude self
-          start: { lt: overlapEnd },
-          end: { gt: overlapStart },
-          status: { in: ['PENDING', 'CONFIRMED'] },
-        },
-        include: {
-          items: {
+      // ✅ Capacity check per window (fixes Sehaj multi-day false "not enough sevadars" errors)
+      if (!isLongPath) {
+        const totalUniqueStaff = await getTotalUniqueStaffCount();
+        const totalPool = await getTotalPoolPerRole();
+        const locMax = getMaxPerLocationPerRole(
+          booking.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA'
+        );
+
+        for (let wi = 0; wi < candidateWindows.length; wi++) {
+          const win = candidateWindows[wi];
+          const hours = hoursByWindow[wi] ?? [];
+          if (!hours.length) continue;
+
+          const overlaps = await tx.booking.findMany({
+            where: {
+              id: { not: booking.id }, // exclude self
+              start: { lt: win.end },
+              end: { gt: win.start },
+              status: { in: ['PENDING', 'CONFIRMED'] },
+            },
             include: {
-              programType: {
-                select: {
-                  name: true, // ✅ needed to detect Sehaj windows in overlaps
-                  minPathers: true,
-                  minKirtanis: true,
-                  peopleRequired: true,
-                  durationMinutes: true,
-                  category: true,
+              items: {
+                include: {
+                  programType: {
+                    select: {
+                      name: true,
+                      minPathers: true,
+                      minKirtanis: true,
+                      peopleRequired: true,
+                      durationMinutes: true,
+                      category: true,
+                    },
+                  },
                 },
               },
             },
-          },
-        },
-      });
+          });
 
-      const usedGW: Record<number, RoleVector> = {};
-      const usedOUT: Record<number, RoleVector> = {};
-      const usedHeadGW: Record<number, number> = {};
-      const usedHeadOUT: Record<number, number> = {};
-      for (const h of BUSINESS_HOURS_24) {
-        usedGW[h] = { PATH: 0, KIRTAN: 0 };
-        usedOUT[h] = { PATH: 0, KIRTAN: 0 };
-        usedHeadGW[h] = 0;
-        usedHeadOUT[h] = 0;
-      }
-
-      for (const b of overlaps) {
-        const vec = b.items.reduce(
-          (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
-          { PATH: 0, KIRTAN: 0 }
-        );
-
-        const headForBooking = b.items
-          .map((it: any) => {
-            const pt: any = it.programType;
-            const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
-
-            const isLongPathItem =
-              pt.category === ProgramCategory.PATH &&
-              (pt.durationMinutes ?? 0) >= 36 * 60 &&
-              (pt.minKirtanis ?? 0) === 0;
-
-            if (isLongPathItem) return Math.max(minSum, 1);
-            return Math.max(pt.peopleRequired ?? 0, minSum);
-          })
-          .reduce((a: number, bb: number) => a + bb, 0);
-
-        const s = new Date(b.start);
-        const e = new Date(b.end);
-
-        const bNames = (b.items ?? []).map((it: any) =>
-          String(it.programType?.name ?? '')
-        );
-        const bWindows = hallWindowsForProgramNames(bNames, s, e);
-
-        const hrs = hoursForWindows(
-          bWindows,
-          b.locationType as any,
-          OUTSIDE_BUFFER_MS
-        );
-
-        for (const h of hrs) {
-          if (b.locationType === 'GURDWARA') {
-            usedGW[h].PATH += vec.PATH ?? 0;
-            usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
-            usedHeadGW[h] += headForBooking;
-          } else {
-            usedOUT[h].PATH += vec.PATH ?? 0;
-            usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
-            usedHeadOUT[h] += headForBooking;
+          const usedGW: Record<number, RoleVector> = {};
+          const usedOUT: Record<number, RoleVector> = {};
+          const usedHeadGW: Record<number, number> = {};
+          const usedHeadOUT: Record<number, number> = {};
+          for (const h of BUSINESS_HOURS_24) {
+            usedGW[h] = { PATH: 0, KIRTAN: 0 };
+            usedOUT[h] = { PATH: 0, KIRTAN: 0 };
+            usedHeadGW[h] = 0;
+            usedHeadOUT[h] = 0;
           }
-        }
-      }
 
-      const totalUniqueStaff = await getTotalUniqueStaffCount();
-      const totalPool = await getTotalPoolPerRole();
-      const locMax = getMaxPerLocationPerRole(
-        booking.locationType as 'GURDWARA' | 'OUTSIDE_GURDWARA'
-      );
-
-      for (const h of hours) {
-        if (!isLongPath) {
-          for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
-            const total = totalPool[r] ?? 0;
-
-            const usedOpp =
-              booking.locationType === 'GURDWARA'
-                ? (usedOUT[h][r] ?? 0)
-                : (usedGW[h][r] ?? 0);
-
-            const usedHere =
-              booking.locationType === 'GURDWARA'
-                ? (usedGW[h][r] ?? 0)
-                : (usedOUT[h][r] ?? 0);
-
-            const sharedLimit = Math.max(0, total - usedOpp);
-            const locLimit = Math.min(
-              sharedLimit,
-              (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+          for (const b of overlaps) {
+            const vec = b.items.reduce(
+              (acc, it: any) => add(acc, reqFromProgram(it.programType as any)),
+              { PATH: 0, KIRTAN: 0 }
             );
 
-            const remaining = Math.max(0, locLimit - usedHere);
-            const need = (required[r] ?? 0) as number;
-            if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
+            const headForBooking = b.items
+              .map((it: any) => {
+                const pt: any = it.programType;
+                const minSum = (pt.minPathers ?? 0) + (pt.minKirtanis ?? 0);
+
+                const isLongPathItem =
+                  pt.category === ProgramCategory.PATH &&
+                  !isSehajName(pt.name) &&
+                  (pt.durationMinutes ?? 0) >= 36 * 60 &&
+                  (pt.minKirtanis ?? 0) === 0;
+
+                if (isLongPathItem) return Math.max(minSum, 1);
+                return Math.max(pt.peopleRequired ?? 0, minSum);
+              })
+              .reduce((a: number, bb: number) => a + bb, 0);
+
+            const s = new Date(b.start);
+            const e = new Date(b.end);
+
+            const bNames = (b.items ?? []).map((it: any) =>
+              String(it.programType?.name ?? '')
+            );
+            const bWindows = hallWindowsForProgramNames(bNames, s, e);
+
+            for (const bw of bWindows) {
+              const paddedBw = padWindow(
+                bw,
+                b.locationType as any,
+                OUTSIDE_BUFFER_MS
+              );
+              const inter = intersectWindow(paddedBw, win);
+              if (!inter) continue;
+
+              const hrs = hourSpan(inter.start, inter.end).filter((h) =>
+                BUSINESS_HOURS_24.includes(h)
+              );
+
+              for (const h of hrs) {
+                if (b.locationType === 'GURDWARA') {
+                  usedGW[h].PATH += vec.PATH ?? 0;
+                  usedGW[h].KIRTAN += vec.KIRTAN ?? 0;
+                  usedHeadGW[h] += headForBooking;
+                } else {
+                  usedOUT[h].PATH += vec.PATH ?? 0;
+                  usedOUT[h].KIRTAN += vec.KIRTAN ?? 0;
+                  usedHeadOUT[h] += headForBooking;
+                }
+              }
+            }
           }
 
-          const usedOppHead =
-            booking.locationType === 'GURDWARA'
-              ? usedHeadOUT[h]
-              : usedHeadGW[h];
-          const usedHereHead =
-            booking.locationType === 'GURDWARA'
-              ? usedHeadGW[h]
-              : usedHeadOUT[h];
+          for (const h of hours) {
+            for (const r of ROLES as ReadonlyArray<keyof RoleVector>) {
+              const total = totalPool[r] ?? 0;
 
-          const remainingHead = Math.max(
-            0,
-            totalUniqueStaff - usedOppHead - usedHereHead
-          );
+              const usedOpp =
+                booking.locationType === 'GURDWARA'
+                  ? (usedOUT[h][r] ?? 0)
+                  : (usedGW[h][r] ?? 0);
 
-          if (remainingHead < headcountRequired)
-            throw new Error('CAPACITY_EXCEEDED');
+              const usedHere =
+                booking.locationType === 'GURDWARA'
+                  ? (usedGW[h][r] ?? 0)
+                  : (usedOUT[h][r] ?? 0);
+
+              const sharedLimit = Math.max(0, total - usedOpp);
+              const locLimit = Math.min(
+                sharedLimit,
+                (locMax as any)[r] ?? Number.MAX_SAFE_INTEGER
+              );
+
+              const remaining = Math.max(0, locLimit - usedHere);
+              const need = (required[r] ?? 0) as number;
+              if (remaining < need) throw new Error('CAPACITY_EXCEEDED');
+            }
+
+            const usedOppHead =
+              booking.locationType === 'GURDWARA'
+                ? usedHeadOUT[h]
+                : usedHeadGW[h];
+            const usedHereHead =
+              booking.locationType === 'GURDWARA'
+                ? usedHeadGW[h]
+                : usedHeadOUT[h];
+
+            const remainingHead = Math.max(
+              0,
+              totalUniqueStaff - usedOppHead - usedHereHead
+            );
+
+            if (remainingHead < headcountRequired)
+              throw new Error('CAPACITY_EXCEEDED');
+          }
         }
       }
 
